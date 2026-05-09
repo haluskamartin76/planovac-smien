@@ -47,15 +47,19 @@ def moze_nastupit(idx, d, smena, poz, vysledky):
 def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_limit, is_75_poz=False):
     pool = []
     for idx in df_db.index:
-        ma_cyk = CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena_target
+        z_val = df_db.loc[idx, 'Zmena']
+        ma_cyk = CYKLY[int(z_val)][(curr_d - START_REF).days % 8] == smena_target
         penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
         fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
         pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-    return [x for x in sorted(pool, key=lambda x: x)]
+    return [x[0] for x in sorted(pool, key=lambda x: x[1])]
 
 # --- HLAVNÁ GENEROVACIA FUNKCIA ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data, use_extra_w, df_db):
     output = io.BytesIO()
+    
+    # Explicitne povieme funkcii, že pd a xlsxwriter sú tie z importov hore
+    global pd
     
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
@@ -76,12 +80,12 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
         fmt_num = workbook.add_format({**fmt_sep, 'num_format': '#,##0.0'})
         f_c1_d = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
         f_c1_n = workbook.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
-        fmt_low = workbook.add_format({**fmt_sep, 'bg_color': '#FF9900', 'num_format': '#,##0.0'})
 
         _, days_count = calendar.monthrange(r, m)
         vysledky = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}
         hod_fond_sofar = {idx: 0.0 for idx in df_db.index}
 
+        # Inicializácia hodín podľa absencií
         for idx in df_db.index:
             abs_dni = parse_days(v_data[idx]['d']) | parse_days(v_data[idx]['kz'])
             z_os = int(df_db.loc[idx, 'Zmena'])
@@ -90,6 +94,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                     if CYKLY[z_os][(date(r, m, d_val) - START_REF).days % 8] in ['D', 'N']:
                         hod_fond_sofar[idx] += 11.5
 
+        # Výpočet zmien
         for d in range(1, days_count + 1):
             curr_d = date(r, m, d)
             is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
@@ -138,6 +143,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                         if d not in cv and str(df_db.loc[idx].get(poz,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, smena, poz, vysledky):
                             vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
 
+        # Vykreslenie do Excelu
         ws.set_column(0, 0, 25)
         for d in range(1, days_count + 1): ws.set_column(d, d, 3.5)
         ws.set_column(days_count+1, days_count+2, 10)
@@ -150,13 +156,13 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
         ws.write(0, days_count+2, "Rozdiel", workbook.add_format({'bold':True, 'border':1}))
 
         for i, (idx, row) in enumerate(df_db.iterrows()):
+            zebra = '#FFFF00' if i % 2 == 1 else '#FFFFFF'
             row_ptr = i*2+1
             ws.merge_range(row_ptr, 0, row_ptr+1, 0, f"{row['Priezvisko']} {row['Meno']}", z_fmts[str(int(row['Zmena']))])
             ws.write(row_ptr, ZZ, int(row['Zmena']))
             for d in range(1, days_count + 1):
-                bg = col_bg_map[d] if col_bg_map[d] != '#FFFFFF' else ('#FFFF00' if i % 2 == 1 else '#FFFFFF')
+                bg = col_bg_map[d] if col_bg_map[d] != '#FFFFFF' else zebra
                 d_d, kz_d, v_d = parse_days(v_data[idx]['d']), parse_days(v_data[idx]['kz']), parse_days(v_data[idx]['v'])
-                cyk_char = CYKLY[int(row['Zmena'])][(date(r, m, d) - START_REF).days % 8]
                 if d in d_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'D', f_d)
                 elif d in kz_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'KZ', f_kz)
                 elif d in v_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'V', f_v)
@@ -187,16 +193,10 @@ def load_db(filename):
             df = ex.parse('Data').dropna(subset=['Priezvisko'])
             df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame()
             return df, df_v
-        except Exception as e:
-            st.error(f"Chyba pri čítaní Excelu: {e}")
+        except:
             return None, None
     return None, None
 
-# DIAGNOSTIKA SÚBOROV (ak nefunguje načítanie)
-if not os.path.exists(DB_FILENAME):
-    st.warning(f"Súbor '{DB_FILENAME}' nebol nájdený. Tu je zoznam súborov, ktoré vidím:")
-    st.code(os.listdir("."))
-    
 df_db_raw, df_v_raw = load_db(DB_FILENAME)
 
 if df_db_raw is not None:
@@ -223,8 +223,8 @@ if df_db_raw is not None:
                 if df_v_raw is not None and not df_v_raw.empty:
                     m_s = df_v_raw[df_v_raw['Priezvisko'].astype(str).str.strip() == str(row['Priezvisko']).strip()]
                     if not m_s.empty:
-                        vd_def = str(m_s['Dovolenka'].iloc[0]) if 'Dovolenka' in m_s.columns else ""
-                        vk_def = str(m_s['KZ'].iloc[0]) if 'KZ' in m_s.columns else ""
+                        vd_def = str(m_s['Dovolenka'].iloc[0]) if 'Dovolenka' in m_s.columns and not m_s['Dovolenka'].empty else ""
+                        vk_def = str(m_s['KZ'].iloc[0]) if 'KZ' in m_s.columns and not m_s['KZ'].empty else ""
 
                 c_d, c_kz, c_v = st.columns(3)
                 vd = c_d.text_input("D", value=vd_def if vd_def != 'nan' else "", key=f"d_{idx}")
@@ -240,3 +240,7 @@ if df_db_raw is not None:
                 st.download_button(label="📥 Stiahnuť hotový Excel", data=xlsx_data, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             except Exception as e:
                 st.error(f"Chyba pri generovaní: {e}")
+else:
+    st.error(f"Súbor {DB_FILENAME} nebol nájdený na serveri.")
+    if os.path.exists("."):
+        st.write("Súbory v adresári:", os.listdir("."))
