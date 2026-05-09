@@ -3,6 +3,7 @@ import calendar
 import random
 import io
 import os
+import pandas as pd
 from datetime import date, datetime
 
 # --- KONFIGURÁCIA ---
@@ -52,16 +53,15 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
         penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
         fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
         pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-    return [x for x in sorted(pool, key=lambda x: x)]
+    # Zoradíme podľa skóre a vrátime IBA INDEXY (idx)
+    return [x[0] for x in sorted(pool, key=lambda x: x[1])]
 
 # --- HLAVNÁ GENEROVACIA FUNKCIA ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data, use_extra_w, df_db):
-    import pandas as pd_local
     import xlsxwriter
-    
     output = io.BytesIO()
     
-    with pd_local.ExcelWriter(output, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         ws = workbook.add_worksheet("Plán")
         ws_miss = workbook.add_worksheet("Neobsadené")
@@ -181,8 +181,8 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                 elif d in kz_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'KZ', f_kz)
                 elif d in v_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'V', f_v)
                 else:
-                    pd, pn = vysledky[d]['D'].get(idx, ""), vysledky[d]['N'].get(idx, "")
-                    ps, ns = short_label(pd), short_label(pn)
+                    pd_item, pn_item = vysledky[d]['D'].get(idx, ""), vysledky[d]['N'].get(idx, "")
+                    ps, ns = short_label(pd_item), short_label(pn_item)
                     ws.write(row_ptr, d, ps, f_c1_d if ps=='C' else workbook.add_format({**fmt_b, 'bg_color': bg}))
                     ws.write(row_ptr+1, d, ns, f_c1_n if ns=='C' else workbook.add_format({**fmt_sep, 'bg_color': bg}))
 
@@ -196,7 +196,6 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
 # --- STREAMLIT UI ---
-import pandas as pd # Import pre hlavnú UI časť
 st.set_page_config(page_title="Plánovač Smien 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
@@ -225,8 +224,8 @@ if os.path.exists(DB_FILENAME):
                 with st.container(border=True):
                     st.write(f"**{row['Priezvisko']} {row['Meno']}**")
                     m_s = df_v_raw[df_v_raw['Priezvisko'].astype(str).str.strip() == str(row['Priezvisko']).strip()] if not df_v_raw.empty else pd.DataFrame()
-                    vd_def = str(m_s['Dovolenka'].iloc[0]) if not m_s.empty and 'Dovolenka' in m_s.columns else ""
-                    vk_def = str(m_s['KZ'].iloc[0]) if not m_s.empty and 'KZ' in m_s.columns else ""
+                    vd_def = str(m_s['Dovolenka'].iloc) if not m_s.empty and 'Dovolenka' in m_s.columns else ""
+                    vk_def = str(m_s['KZ'].iloc) if not m_s.empty and 'KZ' in m_s.columns else ""
                     
                     c_d, c_kz, c_v = st.columns(3)
                     vd = c_d.text_input("D", value=vd_def if vd_def != 'nan' else "", key=f"d_{idx}")
@@ -235,13 +234,13 @@ if os.path.exists(DB_FILENAME):
                     vst.append({'d': vd, 'kz': vk, 'v': vv})
 
         if st.button("🚀 GENEROVAŤ PLÁN", use_container_width=True, type="primary"):
-            with st.spinner("Počítam..."):
+            with st.spinner("Počítam a generujem Excel..."):
                 try:
                     xlsx_data, name = generuj_final_streamlit(mesiac, 2026, fond, parl, date(2026,3,10), date(2026,3,20), vst, extra_w, df_db)
                     st.balloons()
                     st.download_button(label="📥 Stiahnuť hotový Excel", data=xlsx_data, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 except Exception as e:
-                    st.error(f"Chyba: {e}")
+                    st.error(f"Chyba pri generovaní: {e}")
     except Exception as e:
         st.error(f"Chyba pri otváraní Excelu: {e}")
 else:
