@@ -7,7 +7,7 @@ import os
 import xlsxwriter
 from datetime import date, datetime
 
-# --- KONFIGURÁCIA ---
+# --- 1. KONFIGURÁCIA ---
 SVIATKY_2026 = {
     date(2026,1,1), date(2026,1,6), date(2026,4,3), date(2026,4,6),
     date(2026,5,1), date(2026,5,8), date(2026,7,5), date(2026,8,29),
@@ -15,25 +15,13 @@ SVIATKY_2026 = {
     date(2026,12,24), date(2026,12,25), date(2026,12,26)
 }
 PRIO_LIST = ['C2', 'W1', 'W2', 'Z1', 'Z2', 'G', 'GH', 'SH']
-# Stĺpce, ktoré chceme reálne v aplikácii upravovať (aby sme skryli balast)
-DOKL_STLPCE = ['Priezvisko', 'Meno', 'Zmena', 'C1', 'Z8', 'ZT', 'NB', 'Priorita_Z8', 'Priorita_ZT', 'Priorita_NB', 'IR', 'IP', 'X'] + PRIO_LIST
-
 START_REF = date(2026, 3, 1)
 CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILENAME = os.path.join(BASE_DIR, 'databaza_pozicii.xlsx')
 
-# --- POMOCNÉ FUNKCIE ---
-@st.cache_data
-def load_excel_data(path):
-    if not os.path.exists(path):
-        return None, None
-    ex = pd.ExcelFile(path, engine='openpyxl')
-    df_data = ex.parse('Data').dropna(subset=['Priezvisko'])
-    df_volno = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame()
-    return df_data, df_volno
-
+# --- 2. POMOCNÉ FUNKCIE ---
 def parse_days(s):
     res = set()
     if s is None or str(s).lower() == 'nan' or str(s).strip() == "": return res
@@ -68,29 +56,31 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
         pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
     return [x[0] for x in sorted(pool, key=lambda x: x[1])]
 
-# --- GENEROVANIE ---
+# --- 3. HLAVNÁ GENEROVACIA FUNKCIA ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data, use_extra_w, df_db):
     output = io.BytesIO()
+    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         ws = workbook.add_worksheet("Plán")
         ws_miss = workbook.add_worksheet("Neobsadené")
-        
-        # Formáty (identické s tvojím originálom)
+
+        # Formáty
         fmt_b = {'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': False, 'font_size': 9}
         fmt_sep = {**fmt_b, 'bottom': 2}
-        z_fmts = {str(i+1): workbook.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc}) 
-                  for i, c, fc in zip(range(4), ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
+        z_colors = ['#B2B2B2','#FF0000','#FFFF00','#003399']
+        z_fonts = ['white','white','black','white']
+        z_fmts = {str(i+1): workbook.add_format({**fmt_sep, 'bg_color': z_colors[i], 'font_color': z_fonts[i]}) for i in range(4)}
         
         f_d, f_kz, f_v = workbook.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
-        fmt_num, fmt_low = workbook.add_format({**fmt_sep, 'num_format': '#,##0.0'}), workbook.add_format({**fmt_sep, 'bg_color': '#FF9900', 'num_format': '#,##0.0'})
-        f_c1_d, f_c1_n = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True}), workbook.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
+        fmt_num = workbook.add_format({**fmt_sep, 'num_format': '#,##0.0'})
+        f_c1_d = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
+        f_c1_n = workbook.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
 
         _, days_count = calendar.monthrange(r, m)
         vysledky = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}
         hod_fond_sofar = {idx: 0.0 for idx in df_db.index}
 
-        # Inicializácia hodín
         for idx in df_db.index:
             v_idx = df_db.index.get_loc(idx)
             abs_dni = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz'])
@@ -100,67 +90,173 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                     if CYKLY[z_os][(date(r, m, d_val) - START_REF).days % 8] in ['D', 'N']:
                         hod_fond_sofar[idx] += 11.5
 
-        # Výpočet (identická logika ako tvoj pôvodný kód)
+        # Algoritmus priraďovania
         for d in range(1, days_count + 1):
             curr_d = date(r, m, d)
             is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
-            
-            # Tu nasleduje tvoja kompletná logika priraďovania (Z8, C1, ZT, NB, PRIO_LIST, IR/IP)...
-            # (Kvôli dĺžke tu logiku vynechávam, ale v app.py ju máš celú)
-            # ... (vložiť tvoj blok s priraďovaním) ...
 
-        # Zápis do Excelu (identický s tvojím originálom)
-        # ...
+            if is_workday:
+                nas_z8 = False
+                for col_f in ["Priorita_Z8", "Z8"]:
+                    if nas_z8: break
+                    for idx in get_prioritized_people(df_db, curr_d, 'D', hod_fond_sofar, fond_limit, True):
+                        if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
+                        v_idx = df_db.index.get_loc(idx)
+                        cv = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz']) | parse_days(v_data[v_idx]['v'])
+                        if d not in cv and str(df_db.loc[idx].get(col_f,'Nie')).lower() == 'áno':
+                            vysledky[d]['D'][idx] = "Z8"; hod_fond_sofar[idx] += 7.5; nas_z8 = True; break
+
+            for smena in ['D', 'N']:
+                for idx in df_db.index:
+                    if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
+                    if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena and str(df_db.loc[idx].get('C1','Nie')).lower() == 'áno':
+                        v_idx = df_db.index.get_loc(idx)
+                        cv = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz']) | parse_days(v_data[v_idx]['v'])
+                        if d not in cv and moze_nastupit(idx, d, smena, 'C1', vysledky):
+                            vysledky[d][smena][idx] = 'C1'; hod_fond_sofar[idx] += 11.5; break
+
+                for p_n in ['ZT', 'NB']:
+                    if p_n in vysledky[d][smena].values() or (p_n == 'NB' and smena == 'D' and is_workday): continue
+                    pool = get_prioritized_people(df_db, curr_d, smena, hod_fond_sofar, fond_limit)
+                    nas = False
+                    for idx in pool:
+                        if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
+                        if str(df_db.loc[idx].get(f"Priorita_{p_n}",'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
+                            v_idx = df_db.index.get_loc(idx)
+                            cv = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz']) | parse_days(v_data[v_idx]['v'])
+                            if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
+                                vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
+                    if not nas:
+                        for idx in pool:
+                            if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
+                            if str(df_db.loc[idx].get(p_n,'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
+                                v_idx = df_db.index.get_loc(idx)
+                                cv = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz']) | parse_days(v_data[v_idx]['v'])
+                                if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
+                                    vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
+
+                for poz in PRIO_LIST:
+                    if poz in vysledky[d][smena].values(): continue
+                    for idx in get_prioritized_people(df_db, curr_d, smena, hod_fond_sofar, fond_limit):
+                        if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
+                        v_idx = df_db.index.get_loc(idx)
+                        cv = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz']) | parse_days(v_data[v_idx]['v'])
+                        if d not in cv and str(df_db.loc[idx].get(poz,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, smena, poz, vysledky):
+                            vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+
+            if is_workday:
+                wa = (((curr_d - START_REF).days // 7) % 2 == 0)
+                trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
+                for idx in get_prioritized_people(df_db, curr_d, 'D', hod_fond_sofar, fond_limit, True):
+                    if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
+                    v_idx = df_db.index.get_loc(idx)
+                    cv = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz']) | parse_days(v_data[v_idx]['v'])
+                    if d not in cv:
+                        fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
+                        if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
+
+        # Zápis do Excelu
+        ws.set_column(0, 0, 25)
+        for d in range(1, days_count + 1): ws.set_column(d, d, 3.5)
+        ws.set_column(days_count+1, days_count+2, 10)
+        ZZ = days_count + 10
+        col_bg_map = {d: ('#40B4EE' if date(r,m,d) in SVIATKY_2026 else ('#FFCC66' if date(r,m,d).weekday()==5 else ('#CC9900' if date(r,m,d).weekday()==6 else '#FFFFFF'))) for d in range(1, days_count+1)}
         
+        for d in range(1, days_count + 1):
+            ws.write(0, d, d, workbook.add_format({**fmt_b, 'bg_color': col_bg_map[d]}))
+        
+        for i, (idx, row) in enumerate(df_db.iterrows()):
+            zebra = '#FFFF00' if i % 2 == 1 else '#FFFFFF'
+            row_ptr = i*2+1
+            ws.merge_range(row_ptr, 0, row_ptr+1, 0, f"{row['Priezvisko']} {row['Meno']}", z_fmts[str(int(row['Zmena']))])
+            ws.write(row_ptr, ZZ, int(row['Zmena']))
+            for d in range(1, days_count + 1):
+                bg = col_bg_map[d] if col_bg_map[d] != '#FFFFFF' else zebra
+                v_idx = df_db.index.get_loc(idx)
+                d_d, kz_d, v_d = parse_days(v_data[v_idx]['d']), parse_days(v_data[v_idx]['kz']), parse_days(v_data[v_idx]['v'])
+                if d in d_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'D', f_d)
+                elif d in kz_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'KZ', f_kz)
+                elif d in v_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'V', f_v)
+                else:
+                    pd_i, pn_i = vysledky[d]['D'].get(idx, ""), vysledky[d]['N'].get(idx, "")
+                    ps, ns = short_label(pd_i), short_label(pn_i)
+                    ws.write(row_ptr, d, ps, f_c1_d if ps=='C' else workbook.add_format({**fmt_b, 'bg_color': bg}))
+                    ws.write(row_ptr+1, d, ns, f_c1_n if ns=='C' else workbook.add_format({**fmt_sep, 'bg_color': bg}))
+
+            r_ex = row_ptr + 1
+            sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
+            ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)", fmt_num)
+            sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
+            ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
+
+        ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], workbook.add_format({'bold':True, 'border':1}))
+        m_row = 1
+        for d in range(1, days_count + 1):
+            for smena in ['D', 'N']:
+                curr_obs = vysledky[d][smena].values()
+                prio_check = PRIO_LIST + (['Z8'] if smena == 'D' and date(r,m,d).weekday()<5 and date(r,m,d) not in SVIATKY_2026 else [])
+                for p in prio_check:
+                    if p not in curr_obs: ws_miss.write_row(m_row, 0, [d, smena, p]); m_row += 1
+
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
-# --- STREAMLIT UI ---
+# --- 4. STREAMLIT ROZHRANIE ---
 st.set_page_config(page_title="Plánovač Smien 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
-df_db_raw, df_v_raw = load_excel_data(DB_FILENAME)
+if os.path.exists(DB_FILENAME):
+    try:
+        ex = pd.ExcelFile(DB_FILENAME, engine='openpyxl')
+        df_db_raw = ex.parse('Data').dropna(subset=['Priezvisko'])
+        df_v_raw = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame()
+        
+        st.success("✅ Databáza načítaná.")
+        
+        with st.expander("📝 MODULÁCIA DATABÁZY"):
+            df_db = st.data_editor(df_db_raw, num_rows="dynamic", key="editor")
 
-if df_db_raw is not None:
-    st.success("✅ Databáza úspešne načítaná.")
-    
-    # MODULÁCIA: Zobrazíme len tie stĺpce, ktoré sa reálne používajú
-    existujuce_stlpce = [c for c in DOKL_STLPCE if c in df_db_raw.columns]
-    
-    with st.expander("📝 MODULÁCIA DATABÁZY (Zobrazené len dôležité stĺpce)"):
-        df_db = st.data_editor(df_db_raw[existujuce_stlpce], num_rows="dynamic")
+        col1, col2, col3, col4 = st.columns(4)
+        mesiac = col1.selectbox("Mesiac", range(1, 13), index=2)
+        fond = col2.number_input("Fond hodín", value=155.0)
+        parl = col3.checkbox("Parlament", value=True)
+        extra_w = col4.checkbox("Extra W", value=True)
 
-    # UI PRVKY
-    c1, c2, c3, c4 = st.columns(4)
-    mesiac = c1.selectbox("Mesiac", range(1, 13), index=2)
-    fond = c2.number_input("Fond hodín", value=155.0)
-    parl = c3.checkbox("Parlament", value=True)
-    extra_w = c4.checkbox("Extra W", value=True)
+        st.subheader("📅 Zadanie absencií")
+        vst_list = []
+        abs_cols = st.columns(3)
+        for i, (idx, row) in enumerate(df_db.iterrows()):
+            with abs_cols[i % 3]:
+                with st.container(border=True):
+                    st.write(f"**{row['Priezvisko']} {row['Meno']}**")
+                    vd_def, vk_def = "", ""
+                    if not df_v_raw.empty:
+                        m_s = df_v_raw[df_v_raw['Priezvisko'].astype(str).str.strip() == str(row['Priezvisko']).strip()]
+                        if not m_s.empty:
+                            vd_def = str(m_s['Dovolenka'].iloc[0]) if 'Dovolenka' in m_s.columns else ""
+                            vk_def = str(m_s['KZ'].iloc[0]) if 'KZ' in m_s.columns else ""
+                    
+                    c_d, c_kz, c_v = st.columns(3)
+                    vd = c_d.text_input("D", value=vd_def if vd_def != 'nan' else "", key=f"d_{idx}")
+                    vk = c_kz.text_input("KZ", value=vk_def if vk_def != 'nan' else "", key=f"kz_{idx}")
+                    vv = c_v.text_input("V", value="", key=f"v_{idx}")
+                    vst_list.append({'d': vd, 'kz': vk, 'v': vv})
 
-    st.subheader("📅 Zadanie absencií")
-    vst_data = []
-    # Zobrazenie v kompaktnej mriežke
-    cols = st.columns(4)
-    for i, (idx, row) in enumerate(df_db.iterrows()):
-        with cols[i % 4]:
-            with st.container(border=True):
-                st.write(f"**{row['Priezvisko']}**")
-                # Hľadanie v liste Volno
-                vd_def, vk_def = "", ""
-                if not df_v_raw.empty:
-                    m_s = df_v_raw[df_v_raw['Priezvisko'].astype(str).str.strip() == str(row['Priezvisko']).strip()]
-                    if not m_s.empty:
-                        vd_def = str(m_s['Dovolenka'].iloc[0]) if 'Dovolenka' in m_s.columns else ""
-                        vk_def = str(m_s['KZ'].iloc[0]) if 'KZ' in m_s.columns else ""
-                
-                c_d, c_kz, c_v = st.columns(3)
-                vd = c_d.text_input("D", value=vd_def if vd_def != 'nan' else "", key=f"d_{idx}", label_visibility="collapsed")
-                vk = c_kz.text_input("KZ", value=vk_def if vk_def != 'nan' else "", key=f"kz_{idx}", label_visibility="collapsed")
-                vv = c_v.text_input("V", value="", key=f"v_{idx}", label_visibility="collapsed")
-                vst_data.append({'d': vd, 'kz': vk, 'v': vv})
-
-    if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
-        # Tu zavoláš generuj_final_streamlit so všetkými tvojimi logikami
-        # ...
-        st.success("Plán bol úspešne vygenerovaný!")
+        if st.button("🚀 GENEROVAŤ PLÁN", use_container_width=True, type="primary"):
+            with st.spinner("Počítam..."):
+                try:
+                    xlsx_data, name = generuj_final_streamlit(mesiac, 2026, fond, parl, date(2026,3,10), date(2026,3,20), vst_list, extra_w, df_db)
+                    st.success("✅ Plán bol úspešne vygenerovaný!")
+                    st.download_button(
+                        label="📥 STIAHNUŤ EXCEL S PLÁNOM",
+                        data=xlsx_data,
+                        file_name=name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"Chyba pri generovaní: {e}")
+    except Exception as e:
+        st.error(f"Chyba: {e}")
 else:
-    st.error("Súbor 'databaza_pozicii.xlsx' nebol nájdený.")
+    st.error(f"Súbor {DB_FILENAME} nenájdený.")
