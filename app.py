@@ -51,7 +51,7 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
         penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
         fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
         pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-    return [x[0] for x in sorted(pool, key=lambda x: x[1])]
+    return [x for x in sorted(pool, key=lambda x: x)]
 
 # --- HLAVNÁ GENEROVACIA FUNKCIA ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data, use_extra_w, df_db):
@@ -138,16 +138,6 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                         if d not in cv and str(df_db.loc[idx].get(poz,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, smena, poz, vysledky):
                             vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
 
-            if is_workday:
-                wa = (((curr_d - START_REF).days // 7) % 2 == 0)
-                trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
-                for idx in get_prioritized_people(df_db, curr_d, 'D', hod_fond_sofar, fond_limit, True):
-                    if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    cv = parse_days(v_data[idx]['d']) | parse_days(v_data[idx]['kz']) | parse_days(v_data[idx]['v'])
-                    if d not in cv:
-                        fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
-                        if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
-
         ws.set_column(0, 0, 25)
         for d in range(1, days_count + 1): ws.set_column(d, d, 3.5)
         ws.set_column(days_count+1, days_count+2, 10)
@@ -160,12 +150,11 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
         ws.write(0, days_count+2, "Rozdiel", workbook.add_format({'bold':True, 'border':1}))
 
         for i, (idx, row) in enumerate(df_db.iterrows()):
-            zebra = '#FFFF00' if i % 2 == 1 else '#FFFFFF'
             row_ptr = i*2+1
             ws.merge_range(row_ptr, 0, row_ptr+1, 0, f"{row['Priezvisko']} {row['Meno']}", z_fmts[str(int(row['Zmena']))])
             ws.write(row_ptr, ZZ, int(row['Zmena']))
             for d in range(1, days_count + 1):
-                bg = col_bg_map[d] if col_bg_map[d] != '#FFFFFF' else zebra
+                bg = col_bg_map[d] if col_bg_map[d] != '#FFFFFF' else ('#FFFF00' if i % 2 == 1 else '#FFFFFF')
                 d_d, kz_d, v_d = parse_days(v_data[idx]['d']), parse_days(v_data[idx]['kz']), parse_days(v_data[idx]['v'])
                 cyk_char = CYKLY[int(row['Zmena'])][(date(r, m, d) - START_REF).days % 8]
                 if d in d_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'D', f_d)
@@ -174,8 +163,8 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                 else:
                     pd, pn = vysledky[d]['D'].get(idx, ""), vysledky[d]['N'].get(idx, "")
                     ps, ns = short_label(pd), short_label(pn)
-                    ws.write(row_ptr, d, ps, f_c1_d if ps=='C' else workbook.add_format({**fmt_b, 'bg_color': bg, 'bold': bool(ps) and cyk_char != 'D'}))
-                    ws.write(row_ptr+1, d, ns, f_c1_n if ns=='C' else workbook.add_format({**fmt_sep, 'bg_color': bg, 'bold': bool(ns) and cyk_char != 'N'}))
+                    ws.write(row_ptr, d, ps, f_c1_d if ps=='C' else workbook.add_format({**fmt_b, 'bg_color': bg}))
+                    ws.write(row_ptr+1, d, ns, f_c1_n if ns=='C' else workbook.add_format({**fmt_sep, 'bg_color': bg}))
 
             r_ex = row_ptr + 1
             sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
@@ -184,15 +173,6 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
             sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
             ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
 
-        ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], workbook.add_format({'bold':True, 'border':1}))
-        m_row = 1
-        for d in range(1, days_count + 1):
-            for smena in ['D', 'N']:
-                curr_obs = vysledky[d][smena].values()
-                prio_check = PRIO_LIST + (['Z8'] if smena == 'D' and date(r,m,d).weekday()<5 and date(r,m,d) not in SVIATKY_2026 else [])
-                for p in prio_check:
-                    if p not in curr_obs: ws_miss.write_row(m_row, 0, [d, smena, p]); m_row += 1
-    
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
 # --- STREAMLIT UI ---
@@ -207,16 +187,22 @@ def load_db(filename):
             df = ex.parse('Data').dropna(subset=['Priezvisko'])
             df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame()
             return df, df_v
-        except:
+        except Exception as e:
+            st.error(f"Chyba pri čítaní Excelu: {e}")
             return None, None
     return None, None
 
+# DIAGNOSTIKA SÚBOROV (ak nefunguje načítanie)
+if not os.path.exists(DB_FILENAME):
+    st.warning(f"Súbor '{DB_FILENAME}' nebol nájdený. Tu je zoznam súborov, ktoré vidím:")
+    st.code(os.listdir("."))
+    
 df_db_raw, df_v_raw = load_db(DB_FILENAME)
 
 if df_db_raw is not None:
     st.success(f"✅ Databáza '{DB_FILENAME}' načítaná.")
     
-    with st.expander("📝 MODULÁCIA DATABÁZY (Upraviť zručnosti/zmeny)"):
+    with st.expander("📝 MODULÁCIA DATABÁZY"):
         df_db = st.data_editor(df_db_raw, num_rows="dynamic", key="editor")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -254,5 +240,3 @@ if df_db_raw is not None:
                 st.download_button(label="📥 Stiahnuť hotový Excel", data=xlsx_data, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             except Exception as e:
                 st.error(f"Chyba pri generovaní: {e}")
-else:
-    st.error(f"Súbor {DB_FILENAME} nebol nájdený. Nahrajte ho na GitHub.")
