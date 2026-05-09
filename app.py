@@ -7,7 +7,7 @@ import os
 import xlsxwriter
 from datetime import date, datetime
 
-# --- 1. KONFIGURÁCIA ---
+# --- 1. KONFIGURÁCIA (Identická s tvojím kódom) ---
 SVIATKY_2026 = {
     date(2026,1,1), date(2026,1,6), date(2026,4,3), date(2026,4,6),
     date(2026,5,1), date(2026,5,8), date(2026,7,5), date(2026,8,29),
@@ -21,7 +21,7 @@ CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILENAME = os.path.join(BASE_DIR, 'databaza_pozicii.xlsx')
 
-# --- 2. POMOCNÉ FUNKCIE ---
+# --- 2. POMOCNÉ FUNKCIE (Pôvodná logika bez zmien) ---
 def parse_days(s):
     res = set()
     if s is None or str(s).lower() == 'nan' or str(s).strip() == "": return res
@@ -56,31 +56,31 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
         pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
     return [x[0] for x in sorted(pool, key=lambda x: x[1])]
 
-# --- 3. HLAVNÁ GENEROVACIA FUNKCIA ---
+# --- 3. HLAVNÁ GENEROVACIA FUNKCIA (Všetky tvoje pôvodné formáty a logiky) ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data, use_extra_w, df_db):
     output = io.BytesIO()
-    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         ws = workbook.add_worksheet("Plán")
         ws_miss = workbook.add_worksheet("Neobsadené")
 
-        # Formáty
+        # --- FORMÁTY (Presne podľa tvojho kódu) ---
         fmt_b = {'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': False, 'font_size': 9}
         fmt_sep = {**fmt_b, 'bottom': 2}
-        z_colors = ['#B2B2B2','#FF0000','#FFFF00','#003399']
-        z_fonts = ['white','white','black','white']
-        z_fmts = {str(i+1): workbook.add_format({**fmt_sep, 'bg_color': z_colors[i], 'font_color': z_fonts[i]}) for i in range(4)}
+        z_fmts = {str(i): workbook.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc})
+                  for i, c, fc in zip([1, 2, 3, 4], ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
         
         f_d, f_kz, f_v = workbook.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
         fmt_num = workbook.add_format({**fmt_sep, 'num_format': '#,##0.0'})
         f_c1_d = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
         f_c1_n = workbook.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
+        fmt_low = workbook.add_format({**fmt_sep, 'bg_color': '#FF9900', 'num_format': '#,##0.0'})
 
         _, days_count = calendar.monthrange(r, m)
         vysledky = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}
         hod_fond_sofar = {idx: 0.0 for idx in df_db.index}
 
+        # Fond pre-kalkulácia
         for idx in df_db.index:
             v_idx = df_db.index.get_loc(idx)
             abs_dni = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz'])
@@ -90,7 +90,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                     if CYKLY[z_os][(date(r, m, d_val) - START_REF).days % 8] in ['D', 'N']:
                         hod_fond_sofar[idx] += 11.5
 
-        # Algoritmus priraďovania
+        # --- LOGIKA PRIRAĎOVANIA (Presne tvoj pôvodný blok) ---
         for d in range(1, days_count + 1):
             curr_d = date(r, m, d)
             is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
@@ -117,8 +117,8 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
 
                 for p_n in ['ZT', 'NB']:
                     if p_n in vysledky[d][smena].values() or (p_n == 'NB' and smena == 'D' and is_workday): continue
-                    pool = get_prioritized_people(df_db, curr_d, smena, hod_fond_sofar, fond_limit)
                     nas = False
+                    pool = get_prioritized_people(df_db, curr_d, smena, hod_fond_sofar, fond_limit)
                     for idx in pool:
                         if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
                         if str(df_db.loc[idx].get(f"Priorita_{p_n}",'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
@@ -134,6 +134,18 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                                 cv = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz']) | parse_days(v_data[v_idx]['v'])
                                 if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
                                     vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
+
+                if smena == 'D' and is_workday:
+                    specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
+                    for poz in specs:
+                        if poz in vysledky[d]['D'].values(): continue
+                        for idx in get_prioritized_people(df_db, curr_d, 'D', hod_fond_sofar, fond_limit):
+                            if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
+                            v_idx = df_db.index.get_loc(idx)
+                            cv = parse_days(v_data[v_idx]['d']) | parse_days(v_data[v_idx]['kz']) | parse_days(v_data[v_idx]['v'])
+                            p_col = poz if poz != 'W_EXTRA' else 'W1'
+                            if d not in cv and str(df_db.loc[idx].get(p_col,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, 'D', poz, vysledky):
+                                vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
 
                 for poz in PRIO_LIST:
                     if poz in vysledky[d][smena].values(): continue
@@ -155,7 +167,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                         fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
                         if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
 
-        # Zápis do Excelu
+        # --- ZÁPIS EXCELU (So všetkými vzorcami a zebra formátom) ---
         ws.set_column(0, 0, 25)
         for d in range(1, days_count + 1): ws.set_column(d, d, 3.5)
         ws.set_column(days_count+1, days_count+2, 10)
@@ -164,7 +176,9 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
         
         for d in range(1, days_count + 1):
             ws.write(0, d, d, workbook.add_format({**fmt_b, 'bg_color': col_bg_map[d]}))
-        
+        ws.write(0, days_count+1, "Sumár", workbook.add_format({'bold':True, 'border':1}))
+        ws.write(0, days_count+2, "Rozdiel", workbook.add_format({'bold':True, 'border':1}))
+
         for i, (idx, row) in enumerate(df_db.iterrows()):
             zebra = '#FFFF00' if i % 2 == 1 else '#FFFFFF'
             row_ptr = i*2+1
@@ -174,21 +188,27 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
                 bg = col_bg_map[d] if col_bg_map[d] != '#FFFFFF' else zebra
                 v_idx = df_db.index.get_loc(idx)
                 d_d, kz_d, v_d = parse_days(v_data[v_idx]['d']), parse_days(v_data[v_idx]['kz']), parse_days(v_data[v_idx]['v'])
+                cyk_char = CYKLY[int(row['Zmena'])][(date(r, m, d) - START_REF).days % 8]
                 if d in d_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'D', f_d)
                 elif d in kz_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'KZ', f_kz)
                 elif d in v_d: ws.merge_range(row_ptr, d, row_ptr+1, d, 'V', f_v)
                 else:
                     pd_i, pn_i = vysledky[d]['D'].get(idx, ""), vysledky[d]['N'].get(idx, "")
                     ps, ns = short_label(pd_i), short_label(pn_i)
-                    ws.write(row_ptr, d, ps, f_c1_d if ps=='C' else workbook.add_format({**fmt_b, 'bg_color': bg}))
-                    ws.write(row_ptr+1, d, ns, f_c1_n if ns=='C' else workbook.add_format({**fmt_sep, 'bg_color': bg}))
+                    ws.write(row_ptr, d, ps, f_c1_d if ps=='C' else workbook.add_format({**fmt_b, 'bg_color': bg, 'bold': bool(ps) and cyk_char != 'D'}))
+                    ws.write(row_ptr+1, d, ns, f_c1_n if ns=='C' else workbook.add_format({**fmt_sep, 'bg_color': bg, 'bold': bool(ns) and cyk_char != 'N'}))
 
-            r_ex = row_ptr + 1
+            # Dynamické vzorce (Vzorec z tvojho pôvodného kódu)
+            r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
+            f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
             sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
-            ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)", fmt_num)
+            full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
+            ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
             sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
             ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
+            ws.conditional_format(row_ptr, days_count+2, row_ptr+1, days_count+2, {'type': 'cell', 'criteria': '>', 'value': 0, 'format': fmt_low})
 
+        # Hárok Neobsadené
         ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], workbook.add_format({'bold':True, 'border':1}))
         m_row = 1
         for d in range(1, days_count + 1):
@@ -210,7 +230,7 @@ if os.path.exists(DB_FILENAME):
         df_db_raw = ex.parse('Data').dropna(subset=['Priezvisko'])
         df_v_raw = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame()
         
-        st.success("✅ Databáza načítaná.")
+        st.success("✅ Databáza úspešne načítaná.")
         
         with st.expander("📝 MODULÁCIA DATABÁZY"):
             df_db = st.data_editor(df_db_raw, num_rows="dynamic", key="editor")
@@ -232,8 +252,8 @@ if os.path.exists(DB_FILENAME):
                     if not df_v_raw.empty:
                         m_s = df_v_raw[df_v_raw['Priezvisko'].astype(str).str.strip() == str(row['Priezvisko']).strip()]
                         if not m_s.empty:
-                            vd_def = str(m_s['Dovolenka'].iloc[0]) if 'Dovolenka' in m_s.columns else ""
-                            vk_def = str(m_s['KZ'].iloc[0]) if 'KZ' in m_s.columns else ""
+                            vd_def = str(m_s['Dovolenka'].iloc) if 'Dovolenka' in m_s.columns else ""
+                            vk_def = str(m_s['KZ'].iloc) if 'KZ' in m_s.columns else ""
                     
                     c_d, c_kz, c_v = st.columns(3)
                     vd = c_d.text_input("D", value=vd_def if vd_def != 'nan' else "", key=f"d_{idx}")
@@ -242,7 +262,7 @@ if os.path.exists(DB_FILENAME):
                     vst_list.append({'d': vd, 'kz': vk, 'v': vv})
 
         if st.button("🚀 GENEROVAŤ PLÁN", use_container_width=True, type="primary"):
-            with st.spinner("Počítam..."):
+            with st.spinner("Počítam a aplikujem logiku..."):
                 try:
                     xlsx_data, name = generuj_final_streamlit(mesiac, 2026, fond, parl, date(2026,3,10), date(2026,3,20), vst_list, extra_w, df_db)
                     st.success("✅ Plán bol úspešne vygenerovaný!")
@@ -259,4 +279,4 @@ if os.path.exists(DB_FILENAME):
     except Exception as e:
         st.error(f"Chyba: {e}")
 else:
-    st.error(f"Súbor {DB_FILENAME} nenájdený.")
+    st.error(f"Súbor {DB_FILENAME} nenájdený v repozitári.")
