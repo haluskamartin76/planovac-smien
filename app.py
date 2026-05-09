@@ -4,6 +4,7 @@ import calendar
 import random
 import io
 import os
+import xlsxwriter
 from datetime import date, datetime
 
 # --- KONFIGURÁCIA ---
@@ -17,6 +18,7 @@ PRIO_LIST = ['C2', 'W1', 'W2', 'Z1', 'Z2', 'G', 'GH', 'SH']
 START_REF = date(2026, 3, 1)
 CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 
+# Cesta k súboru
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILENAME = os.path.join(BASE_DIR, 'databaza_pozicii.xlsx')
 
@@ -57,10 +59,8 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
 
 # --- HLAVNÁ GENEROVACIA FUNKCIA ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data, use_extra_w, df_db):
-    import xlsxwriter # Import vnútri funkcie pre stabilitu
     output = io.BytesIO()
     
-    # Použitie pd (Pandas) vnútri context managera
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         ws = workbook.add_worksheet("Plán")
@@ -193,15 +193,6 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
             sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
             ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
 
-        ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], workbook.add_format({'bold':True, 'border':1}))
-        m_row = 1
-        for d in range(1, days_count + 1):
-            for smena in ['D', 'N']:
-                curr_obs = vysledky[d][smena].values()
-                prio_check = PRIO_LIST + (['Z8'] if smena == 'D' and date(r,m,d).weekday()<5 and date(r,m,d) not in SVIATKY_2026 else [])
-                for p in prio_check:
-                    if p not in curr_obs: ws_miss.write_row(m_row, 0, [d, smena, p]); m_row += 1
-
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
 # --- STREAMLIT UI ---
@@ -209,45 +200,49 @@ st.set_page_config(page_title="Plánovač Smien 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
 if os.path.exists(DB_FILENAME):
-    ex = pd.ExcelFile(DB_FILENAME)
-    df_db_raw = ex.parse('Data').dropna(subset=['Priezvisko'])
-    df_v_raw = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame()
-    
-    st.success("✅ Databáza načítaná.")
-    
-    with st.expander("📝 MODULÁCIA DATABÁZY"):
-        df_db = st.data_editor(df_db_raw, num_rows="dynamic", key="editor")
+    try:
+        # OPRAVA: Pridaný engine='openpyxl'
+        ex = pd.ExcelFile(DB_FILENAME, engine='openpyxl')
+        df_db_raw = ex.parse('Data').dropna(subset=['Priezvisko'])
+        df_v_raw = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame()
+        
+        st.success("✅ Databáza načítaná.")
+        
+        with st.expander("📝 MODULÁCIA DATABÁZY"):
+            df_db = st.data_editor(df_db_raw, num_rows="dynamic", key="editor")
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1: mesiac = st.selectbox("Mesiac", range(1, 13), index=2)
-    with col2: fond = st.number_input("Fond hodín", value=155.0)
-    with col3: parl = st.checkbox("Parlament aktívny", value=True)
-    with col4: extra_w = st.checkbox("Extra W povolené", value=True)
+        col1, col2, col3, col4 = st.columns(4)
+        with col1: mesiac = st.selectbox("Mesiac", range(1, 13), index=2)
+        with col2: fond = st.number_input("Fond hodín", value=155.0)
+        with col3: parl = st.checkbox("Parlament aktívny", value=True)
+        with col4: extra_w = st.checkbox("Extra W povolené", value=True)
 
-    st.subheader("📅 Zadanie absencií")
-    vst = []
-    abs_cols = st.columns(3)
-    for i, (idx, row) in enumerate(df_db.iterrows()):
-        with abs_cols[i % 3]:
-            with st.container(border=True):
-                st.write(f"**{row['Priezvisko']} {row['Meno']}**")
-                m_s = df_v_raw[df_v_raw['Priezvisko'].astype(str).str.strip() == str(row['Priezvisko']).strip()] if not df_v_raw.empty else pd.DataFrame()
-                vd_def = str(m_s['Dovolenka'].iloc[0]) if not m_s.empty and 'Dovolenka' in m_s.columns else ""
-                vk_def = str(m_s['KZ'].iloc[0]) if not m_s.empty and 'KZ' in m_s.columns else ""
-                
-                c_d, c_kz, c_v = st.columns(3)
-                vd = c_d.text_input("D", value=vd_def if vd_def != 'nan' else "", key=f"d_{idx}")
-                vk = c_kz.text_input("KZ", value=vk_def if vk_def != 'nan' else "", key=f"kz_{idx}")
-                vv = c_v.text_input("V", value="", key=f"v_{idx}")
-                vst.append({'d': vd, 'kz': vk, 'v': vv})
+        st.subheader("📅 Zadanie absencií")
+        vst = []
+        abs_cols = st.columns(3)
+        for i, (idx, row) in enumerate(df_db.iterrows()):
+            with abs_cols[i % 3]:
+                with st.container(border=True):
+                    st.write(f"**{row['Priezvisko']} {row['Meno']}**")
+                    m_s = df_v_raw[df_v_raw['Priezvisko'].astype(str).str.strip() == str(row['Priezvisko']).strip()] if not df_v_raw.empty else pd.DataFrame()
+                    vd_def = str(m_s['Dovolenka'].iloc[0]) if not m_s.empty and 'Dovolenka' in m_s.columns else ""
+                    vk_def = str(m_s['KZ'].iloc[0]) if not m_s.empty and 'KZ' in m_s.columns else ""
+                    
+                    c_d, c_kz, c_v = st.columns(3)
+                    vd = c_d.text_input("D", value=vd_def if vd_def != 'nan' else "", key=f"d_{idx}")
+                    vk = c_kz.text_input("KZ", value=vk_def if vk_def != 'nan' else "", key=f"kz_{idx}")
+                    vv = c_v.text_input("V", value="", key=f"v_{idx}")
+                    vst.append({'d': vd, 'kz': vk, 'v': vv})
 
-    if st.button("🚀 GENEROVAŤ PLÁN", use_container_width=True, type="primary"):
-        with st.spinner("Počítam a generujem Excel..."):
-            try:
-                xlsx_data, name = generuj_final_streamlit(mesiac, 2026, fond, parl, date(2026,3,10), date(2026,3,20), vst, extra_w, df_db)
-                st.balloons()
-                st.download_button(label="📥 Stiahnuť hotový Excel", data=xlsx_data, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            except Exception as e:
-                st.error(f"Chyba pri generovaní: {e}")
+        if st.button("🚀 GENEROVAŤ PLÁN", use_container_width=True, type="primary"):
+            with st.spinner("Počítam..."):
+                try:
+                    xlsx_data, name = generuj_final_streamlit(mesiac, 2026, fond, parl, date(2026,3,10), date(2026,3,20), vst, extra_w, df_db)
+                    st.balloons()
+                    st.download_button(label="📥 Stiahnuť Excel", data=xlsx_data, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                except Exception as e:
+                    st.error(f"Chyba: {e}")
+    except Exception as e:
+        st.error(f"Chyba pri otváraní Excelu: {e}. Skontrolujte súbor '{DB_FILENAME}'.")
 else:
     st.error(f"Súbor {DB_FILENAME} nenájdený v repozitári.")
