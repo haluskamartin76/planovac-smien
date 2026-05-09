@@ -1,10 +1,8 @@
 import streamlit as st
-import pandas as pd
 import calendar
 import random
 import io
 import os
-import xlsxwriter
 from datetime import date, datetime
 
 # --- KONFIGURÁCIA ---
@@ -18,7 +16,6 @@ PRIO_LIST = ['C2', 'W1', 'W2', 'Z1', 'Z2', 'G', 'GH', 'SH']
 START_REF = date(2026, 3, 1)
 CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 
-# Cesta k súboru
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILENAME = os.path.join(BASE_DIR, 'databaza_pozicii.xlsx')
 
@@ -59,9 +56,12 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
 
 # --- HLAVNÁ GENEROVACIA FUNKCIA ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data, use_extra_w, df_db):
+    import pandas as pd_local
+    import xlsxwriter
+    
     output = io.BytesIO()
     
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    with pd_local.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         ws = workbook.add_worksheet("Plán")
         ws_miss = workbook.add_worksheet("Neobsadené")
@@ -196,12 +196,12 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, v_data,
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
 # --- STREAMLIT UI ---
+import pandas as pd # Import pre hlavnú UI časť
 st.set_page_config(page_title="Plánovač Smien 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
 if os.path.exists(DB_FILENAME):
     try:
-        # OPRAVA: Pridaný engine='openpyxl'
         ex = pd.ExcelFile(DB_FILENAME, engine='openpyxl')
         df_db_raw = ex.parse('Data').dropna(subset=['Priezvisko'])
         df_v_raw = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame()
@@ -239,10 +239,10 @@ if os.path.exists(DB_FILENAME):
                 try:
                     xlsx_data, name = generuj_final_streamlit(mesiac, 2026, fond, parl, date(2026,3,10), date(2026,3,20), vst, extra_w, df_db)
                     st.balloons()
-                    st.download_button(label="📥 Stiahnuť Excel", data=xlsx_data, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    st.download_button(label="📥 Stiahnuť hotový Excel", data=xlsx_data, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 except Exception as e:
                     st.error(f"Chyba: {e}")
     except Exception as e:
-        st.error(f"Chyba pri otváraní Excelu: {e}. Skontrolujte súbor '{DB_FILENAME}'.")
+        st.error(f"Chyba pri otváraní Excelu: {e}")
 else:
-    st.error(f"Súbor {DB_FILENAME} nenájdený v repozitári.")
+    st.error(f"Súbor {DB_FILENAME} nenájdený.")
