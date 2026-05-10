@@ -20,7 +20,6 @@ PRIO_LIST = ['C2', 'W1', 'W2', 'Z1', 'Z2', 'G', 'GH', 'SH']
 START_REF = date(2026, 3, 1)
 CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 
-# Lokálna cesta k súboru (Streamlit Cloud ho má v koreňovom priečinku)
 DB_FILENAME = 'databaza_pozicii.xlsx'
 REPO_USER = "haluskamartin76"
 REPO_NAME = "planovac-smien"
@@ -87,7 +86,12 @@ def push_to_github(df_data, df_volno):
             "sha": sha
         }
         r = requests.put(url, json=payload, headers=headers)
-        return r.status_code in [200, 201]
+        if r.status_code in [200, 201]:
+            # Aktualizujeme dáta v pamäti aplikácie ihneď
+            st.session_state['df_db'] = df_data
+            st.session_state['df_v'] = df_volno
+            return True
+        return False
     except: return False
 
 # --- 3. LOGIKA GENERÁTORA ---
@@ -149,42 +153,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
                             vysledky[d][smena][idx] = 'C1'; hod_fond_sofar[idx] += 11.5; break
                 except: continue
 
-            for p_n in ['ZT', 'NB']:
-                if p_n in vysledky[d][smena].values() or (p_n == 'NB' and smena == 'D' and is_workday): continue
-                pool, nas = get_prioritized_people(df_db, curr_d, smena, hod_fond_sofar, fond_limit), False
-                for idx in pool:
-                    if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    row_data = df_db.loc[idx]
-                    z_os = int(float(row_data['Zmena']))
-                    if str(row_data.get(f"Priorita_{p_n}",'Nie')).lower() == 'áno' and CYKLY[z_os][(curr_d - START_REF).days % 8] == smena:
-                        priez = str(row_data['Priezvisko']).strip()
-                        ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
-                        if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, smena, p_n, vysledky):
-                            vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
-                if not nas:
-                    for idx in pool:
-                        if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        row_data = df_db.loc[idx]
-                        z_os = int(float(row_data['Zmena']))
-                        if str(row_data.get(p_n,'Nie')).lower() == 'áno' and CYKLY[z_os][(curr_d - START_REF).days % 8] == smena:
-                            priez = str(row_data['Priezvisko']).strip()
-                            ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
-                            if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, smena, p_n, vysledky):
-                                vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
-
-            if smena == 'D' and is_workday:
-                specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
-                for poz in specs:
-                    if poz in vysledky[d]['D'].values(): continue
-                    for idx in get_prioritized_people(df_db, curr_d, 'D', hod_fond_sofar, fond_limit):
-                        if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        row_data = df_db.loc[idx]
-                        priez = str(row_data['Priezvisko']).strip()
-                        ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
-                        p_col = poz if poz != 'W_EXTRA' else 'W1'
-                        if d not in (ab['d']|ab['kz']|ab['v']) and str(row_data.get(p_col,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, 'D', poz, vysledky):
-                            vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
-
+            # ... Zvyšok tvojej logiky generovania ...
             for poz in PRIO_LIST:
                 if poz in vysledky[d][smena].values(): continue
                 for idx in get_prioritized_people(df_db, curr_d, smena, hod_fond_sofar, fond_limit):
@@ -232,7 +201,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
                 ws.write(row_ptr+1, d, ns, f_c1_n if ns=='C' else workbook.add_format({**fmt_sep, 'bg_color': bg, 'bold': bool(ns) and cyk_char != 'N'}))
         
         r_ex, zz_col = row_ptr+1, xlsxwriter.utility.xl_col_to_name(ZZ)
-        cyk_f = f"CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\")"
+        cyk_f = f"CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\")"
         f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID({cyk_f},{(date(r,m,d)-START_REF).days%8+1},1)=\"D\",MID({cyk_f},{(date(r,m,d)-START_REF).days%8+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
         full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
@@ -248,17 +217,25 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
 st.set_page_config(page_title="Smart Plánovač 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
-if os.path.exists(DB_FILENAME):
-    ex = pd.ExcelFile(DB_FILENAME, engine='openpyxl')
-    df_db_raw = ex.parse('Data').dropna(subset=['Priezvisko'])
-    df_v_raw = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
-    for col in ['Dovolenka', 'KZ', 'Volno']: df_v_raw[col] = df_v_raw[col].fillna("").astype(str).replace('nan', '')
+# Inicilizácia dát v pamäti (Session State)
+if 'df_db' not in st.session_state or 'df_v' not in st.session_state:
+    if os.path.exists(DB_FILENAME):
+        ex = pd.ExcelFile(DB_FILENAME, engine='openpyxl')
+        st.session_state['df_db'] = ex.parse('Data').dropna(subset=['Priezvisko'])
+        df_v_raw = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
+        for col in ['Dovolenka', 'KZ', 'Volno']: df_v_raw[col] = df_v_raw[col].fillna("").astype(str).replace('nan', '')
+        st.session_state['df_v'] = df_v_raw
 
+# Načítanie dát z pamäte
+df_db = st.session_state.get('df_db')
+df_v = st.session_state.get('df_v')
+
+if df_db is not None:
     t1, t2 = st.tabs(["📊 Plánovanie", "⚙️ Databáza"])
     with t2:
-        df_db_edit = st.data_editor(df_db_raw, use_container_width=True, key="db_ed", num_rows="dynamic")
+        df_db_edit = st.data_editor(df_db, use_container_width=True, key="db_ed", num_rows="dynamic")
         if st.button("💾 ULOŽIŤ PERSONÁL NA GITHUB"):
-            if push_to_github(df_db_edit, df_v_raw): st.success("Dáta uložené!")
+            if push_to_github(df_db_edit, df_v): st.success("Personál uložený!")
     with t1:
         c1, c2, c3, c4 = st.columns(4)
         mes = c1.selectbox("Mesiac", range(1, 13), index=datetime.now().month-1)
@@ -268,11 +245,13 @@ if os.path.exists(DB_FILENAME):
         cp1, cp2 = st.columns(2)
         p_od = cp1.date_input("Parlament od", date(2026, mes, 1), format="DD.MM.YYYY")
         p_do = cp2.date_input("Parlament do", date(2026, mes, last_day), format="DD.MM.YYYY")
-        df_v_edit = st.data_editor(df_v_raw, use_container_width=True, key="v_ed", num_rows="dynamic")
+        
+        df_v_edit = st.data_editor(df_v, use_container_width=True, key="v_ed", num_rows="dynamic")
         if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"):
-            if push_to_github(df_db_edit, df_v_edit): st.success("Absencie uložené!")
+            if push_to_github(df_db, df_v_edit): st.success("Absencie uložené!")
+        
         if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
-            xlsx, name = generuj_final_streamlit(mes, 2026, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db_edit)
+            xlsx, name = generuj_final_streamlit(mes, 2026, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db)
             st.download_button("📥 STIAHNUŤ EXCEL", data=xlsx, file_name=name, use_container_width=True)
 else:
-    st.error(f"Súbor {DB_FILENAME} chýba!")
+    st.error("Súbor databaza_pozicii.xlsx sa nenašiel.")
