@@ -3,7 +3,7 @@ import pandas as pd
 import calendar, random, io, os, xlsxwriter, base64, requests, time
 from datetime import date, datetime
 
-# --- 1. KONFIGURÁCIA ---
+# --- 1. KONFIGURÁCIA (Identická s tvojím originálom) ---
 SVIATKY_2026 = {
     date(2026,1,1), date(2026,1,6), date(2026,4,3), date(2026,4,6),
     date(2026,5,1), date(2026,5,8), date(2026,7,5), date(2026,8,29),
@@ -42,26 +42,28 @@ def moze_nastupit(idx, d, smena, poz, vysledky):
     if d > 2 and idx in vysledky[d-1][smena] and idx in vysledky[d-2][smena]: return False
     return True
 
-# NOVÉ: Načítanie priamo z GitHub API (vždy aktuálne)
+# OPRAVENÉ: Načítanie cez raw URL (pre verejné repo najistejšie)
 def load_from_github():
-    if "GITHUB_TOKEN" not in st.secrets: return None
-    url = f"https://github.com{REPO_USER}/{REPO_NAME}/contents/{DB_FILENAME}?t={int(time.time())}"
-    headers = {"Authorization": f"token {st.secrets['GITHUB_TOKEN']}", "Accept": "application/vnd.github.v3.raw"}
+    url = f"https://githubusercontent.com{REPO_USER}/{REPO_NAME}/main/{DB_FILENAME}?t={int(time.time())}"
     try:
-        res = requests.get(url, headers=headers)
-        if res.status_code == 200: return io.BytesIO(res.content)
+        res = requests.get(url)
+        if res.status_code == 200:
+            return io.BytesIO(res.content)
     except: pass
     return None
 
 def push_to_github(df_data, df_volno):
-    if "GITHUB_TOKEN" not in st.secrets: return False
+    if "GITHUB_TOKEN" not in st.secrets:
+        st.error("Chýba GITHUB_TOKEN v Secrets!")
+        return False
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_data.to_excel(writer, sheet_name='Data', index=False)
         df_volno.to_excel(writer, sheet_name='Volno', index=False)
     content = output.getvalue()
+    token = st.secrets["GITHUB_TOKEN"]
     url = f"https://github.com{REPO_USER}/{REPO_NAME}/contents/{DB_FILENAME}"
-    headers = {"Authorization": f"token {st.secrets['GITHUB_TOKEN']}", "Accept": "application/vnd.github.v3+json"}
+    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
     try:
         res = requests.get(url, headers=headers)
         sha = res.json().get('sha') if res.status_code == 200 else None
@@ -70,7 +72,7 @@ def push_to_github(df_data, df_volno):
         return r.status_code in [200, 201]
     except: return False
 
-# --- 3. GENEROVANIE (Tvoja originálna logika) ---
+# --- 3. LOGIKA GENEROVANIA (Identická s tvojím funkčným kódom) ---
 def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_extra_w, df_db):
     output = io.BytesIO()
     wb = xlsxwriter.Workbook(output)
@@ -131,8 +133,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
 
             for p_n in ['ZT', 'NB']:
                 if p_n in vysledky[d][smena].values() or (p_n == 'NB' and smena == 'D' and is_workday): continue
-                pool = get_prioritized_people(smena)
-                nas = False
+                pool, nas = get_prioritized_people(smena), False
                 for idx in pool:
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
                     if str(df_db.loc[idx].get(f"Priorita_{p_n}",'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
@@ -183,11 +184,10 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
 
     ws.set_column(0, 0, 25)
     for d in range(1, days_count + 1): ws.set_column(d, d, 3.5)
+    col_bg_map = {day: ('#40B4EE' if date(r,m,day) in SVIATKY_2026 else ('#FFCC66' if date(r,m,day).weekday()==5 else ('#CC9900' if date(r,m,day).weekday()==6 else '#FFFFFF'))) for day in range(1, days_count+1)}
+    for day in range(1, days_count+1): ws.write(0, day, day, wb.add_format({**fmt_b, 'bg_color': col_bg_map[day]}))
+    ws.write(0, days_count+1, "Sumár", wb.add_format({'bold':True, 'border':1})); ws.write(0, days_count+2, "Rozdiel", wb.add_format({'bold':True, 'border':1}))
     ZZ = days_count + 10
-    col_bg_map = {d: ('#40B4EE' if date(r,m,d) in SVIATKY_2026 else ('#FFCC66' if date(r,m,d).weekday()==5 else ('#CC9900' if date(r,m,d).weekday()==6 else '#FFFFFF'))) for d in range(1, days_count+1)}
-    for d in range(1, days_count + 1): ws.write(0, d, d, wb.add_format({**fmt_b, 'bg_color': col_bg_map[d]}))
-    ws.write(0, days_count+1, "Sumár", wb.add_format({'bold':True, 'border':1}))
-    ws.write(0, days_count+2, "Rozdiel", wb.add_format({'bold':True, 'border':1}))
 
     for i, (idx, row) in enumerate(df_db.iterrows()):
         zebra, row_ptr = ('#FFFF00' if i % 2 == 1 else '#FFFFFF'), i*2+1
@@ -207,8 +207,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
                 ws.write(row_ptr+1, d, ns, f_c1_n if ns=='C' else wb.add_format({**fmt_sep, 'bg_color': bg, 'bold': bool(ns) and cyk_char != 'N'}))
 
         r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
-        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
+        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(day)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(day)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,day)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,day)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for day in range(1, days_count+1)]
         full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
@@ -218,11 +218,11 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
     wb.close()
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
-# --- 4. STREAMLIT UI ---
-st.set_page_config(page_title="Smart Plánovač 2026", layout="wide")
-st.title("🚀 Smart Plánovač 2026")
+# --- 4. UI ---
+st.set_page_config(page_title="Plánovač 2026", layout="wide")
+st.title("🚀 Smart Plánovač Smien 2026")
 
-# Inicilizácia a načítanie dát
+# Inicilizácia session state
 if 'df_db' not in st.session_state:
     db_file = load_from_github()
     if db_file:
@@ -231,15 +231,13 @@ if 'df_db' not in st.session_state:
         df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
         for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace('nan', '')
         st.session_state.df_v = df_v
-    else: st.error("Chyba načítania z GitHubu!")
 
 if 'df_db' in st.session_state:
     t1, t2 = st.tabs(["📊 Plánovanie", "⚙️ Databáza"])
     with t2:
         st.session_state.df_db = st.data_editor(st.session_state.df_db, use_container_width=True, key="db_ed")
-        if st.button("💾 ULOŽIŤ PERSONÁL NA GITHUB"):
+        if st.button("💾 ULOŽIŤ PERSONÁL"):
             if push_to_github(st.session_state.df_db, st.session_state.df_v): st.success("Uložené na GitHub!")
-            else: st.error("Chyba ukladania!")
     with t1:
         c1, c2, c3, c4 = st.columns(4)
         mes = c1.selectbox("Mesiac", range(1, 13), index=datetime.now().month-1)
@@ -250,10 +248,11 @@ if 'df_db' in st.session_state:
         p_do = st.date_input("Do", date(2026, mes, last_day), format="DD.MM.YYYY")
         
         st.session_state.df_v = st.data_editor(st.session_state.df_v, use_container_width=True, key="v_ed")
-        if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"):
+        if st.button("💾 ULOŽIŤ ABSENCIE"):
             if push_to_github(st.session_state.df_db, st.session_state.df_v): st.success("Absencie uložené na GitHub!")
-            else: st.error("Chyba ukladania!")
         
         if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
             xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, st.session_state.df_v, extra_w, st.session_state.df_db)
             st.download_button("📥 STIAHNUŤ", data=xlsx, file_name=name, use_container_width=True)
+else:
+    st.error("Nepodarilo sa načítať databázu. Skontroluj, či súbor databaza_pozicii.xlsx je na GitHube vo vetve 'main'.")
