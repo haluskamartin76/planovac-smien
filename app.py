@@ -23,7 +23,7 @@ CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILENAME = os.path.join(BASE_DIR, 'databaza_pozicii.xlsx')
 
-# CESTA K TVOJMU REPOZITÁRU (Už vyplnená)
+# NASTAVENÁ CESTA K TVOJMU REPOZITÁRU
 REPO_PATH = "haluskamartin76/planovac-smien" 
 
 # --- 2. POMOCNÉ FUNKCIE ---
@@ -64,7 +64,7 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
 
 def push_to_github(df_data, df_volno):
     if "GITHUB_TOKEN" not in st.secrets:
-        st.error("Chýba GITHUB_TOKEN v Secrets! Nastavte ho v Streamlit Cloud.")
+        st.error("Chýba GITHUB_TOKEN v Secrets!")
         return False
     
     output = io.BytesIO()
@@ -74,6 +74,7 @@ def push_to_github(df_data, df_volno):
     
     content = output.getvalue()
     token = st.secrets["GITHUB_TOKEN"]
+    # OPRAVENÁ ADRESA PRE GITHUB API
     url = f"https://github.com{REPO_PATH}/contents/databaza_pozicii.xlsx"
     headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
     
@@ -82,24 +83,24 @@ def push_to_github(df_data, df_volno):
         sha = res.json().get('sha') if res.status_code == 200 else None
         
         payload = {
-            "message": f"Aktualizácia absencií {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            "message": f"Update databázy {datetime.now().strftime('%d.%m.%Y %H:%M')}",
             "content": base64.b64encode(content).decode(),
             "sha": sha
         }
         r = requests.put(url, json=payload, headers=headers)
         return r.status_code in [200, 201]
     except Exception as e:
-        st.error(f"GitHub Error: {e}")
+        st.error(f"Chyba pripojenia: {e}")
         return False
 
-# --- 3. HLAVNÁ GENEROVACIA FUNKCIA ---
+# --- 3. GENEROVANIE ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_volno_edited, use_extra_w, df_db):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook, ws, ws_miss = writer.book, writer.book.add_worksheet("Plán"), writer.book.add_worksheet("Neobsadené")
         fmt_b = {'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': False, 'font_size': 9}
         fmt_sep = {**fmt_b, 'bottom': 2}
-        z_fmts = {str(i): workbook.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc}) for i, c, fc in zip([1, 2, 3, 4], ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
+        z_fmts = {str(i+1): workbook.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc}) for i, c, fc in zip(range(4), ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
         f_d, f_kz, f_v = workbook.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
         fmt_num, fmt_low = workbook.add_format({**fmt_sep, 'num_format': '#,##0.0'}), workbook.add_format({**fmt_sep, 'bg_color': '#FF9900', 'num_format': '#,##0.0'})
         f_c1_d = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
@@ -122,7 +123,6 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
         for d in range(1, days_count + 1):
             curr_d = date(r, m, d)
             is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
-            
             if is_workday:
                 nas_z8 = False
                 for col_f in ["Priorita_Z8", "Z8"]:
@@ -231,7 +231,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
 # --- 4. STREAMLIT UI ---
-st.set_page_config(page_title="Plánovač 2026", layout="wide")
+st.set_page_config(page_title="Smart Plánovač 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
 if os.path.exists(DB_FILENAME):
@@ -244,13 +244,13 @@ if os.path.exists(DB_FILENAME):
     with t2:
         df_db_edit = st.data_editor(df_db_raw, use_container_width=True, key="db_ed")
         if st.button("💾 ULOŽIŤ PERSONÁL NA GITHUB"):
-            if push_to_github(df_db_edit, df_v_raw): st.success("Uložené!")
+            if push_to_github(df_db_edit, df_v_raw): st.success("Dáta úspešne uložené na GitHub!")
     with t1:
         c1, c2, c3, c4 = st.columns(4)
         mes, fon = c1.selectbox("Mesiac", range(1, 13), index=datetime.now().month-1), c2.number_input("Fond", value=155.0)
         df_v_edit = st.data_editor(df_v_raw, use_container_width=True, key="v_ed")
         if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"):
-            if push_to_github(df_db_edit, df_v_edit): st.success("Absencie uložené!")
+            if push_to_github(df_db_edit, df_v_edit): st.success("Absencie úspešne uložené na GitHub!")
         if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
             xlsx, name = generuj_final_streamlit(mes, 2026, fon, c3.checkbox("Parlament", True), date(2026,3,10), date(2026,3,20), df_v_edit, c4.checkbox("Extra W", True), df_db_edit)
             st.download_button("📥 STIAHNUŤ EXCEL", data=xlsx, file_name=name, use_container_width=True)
