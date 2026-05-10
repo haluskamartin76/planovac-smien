@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import calendar, random, io, os, xlsxwriter
+import calendar, random, io, os, xlsxwriter, re
 from datetime import date, datetime
 
 # --- 1. KONFIGURÁCIA ---
@@ -14,11 +14,14 @@ PRIO_LIST = ['C2', 'W1', 'W2', 'Z1', 'Z2', 'G', 'GH', 'SH']
 START_REF = date(2026, 3, 1)
 CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 
+# --- 2. POMOCNÉ FUNKCIE ---
 def parse_days(s):
     res = set()
     if pd.isna(s) or str(s).lower() == 'nan' or str(s).strip() == "": return res
     try:
-        parts = str(s).replace(' ', '').replace('.0', '').replace('.', ',').split(',')
+        # Odstránenie bielych znakov a ošetrenie formátu
+        clean_s = str(s).replace(' ', '').replace('.0', '').replace('.', ',')
+        parts = clean_s.split(',')
         for p in parts:
             if not p or not any(char.isdigit() for char in p): continue
             if '-' in p:
@@ -27,6 +30,15 @@ def parse_days(s):
             else: res.add(int(float(p)))
     except: pass
     return res
+
+def validate_input(df):
+    """Skontroluje, či sú v tabuľke iba povolené znaky (čísla, čiarky, pomlčky)"""
+    pattern = re.compile(r'^[0-9,\-\s]*$')
+    for col in ['Dovolenka', 'KZ', 'Volno']:
+        for val in df[col]:
+            if val and not pattern.match(str(val)):
+                return False, f"Chyba v stĺpci {col}: Hodnota '{val}' obsahuje nepovolené znaky. Používajte len čísla, čiarky a pomlčky (napr. 1, 3-5)."
+    return True, ""
 
 def short_label(lbl):
     m = {"C1":"C", "C2":"C", "Z1":"Z", "Z2":"Z", "W1":"W", "W2":"W", "W_EXTRA":"W", "IR":"R", "IP":"K"}
@@ -38,7 +50,7 @@ def moze_nastupit(idx, d, smena, poz, vysledky):
     if d > 2 and idx in vysledky[d-1][smena] and idx in vysledky[d-2][smena]: return False
     return True
 
-# --- 2. GENEROVANIE (KOMPLETNÁ LOGIKA, VIZUÁL A FORMÁTOVANIE ROZDIELU) ---
+# --- 3. HLAVNÁ LOGIKA GENEROVANIA ---
 def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_extra_w, df_db):
     output = io.BytesIO()
     wb = xlsxwriter.Workbook(output)
@@ -56,15 +68,14 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
     vysledky, hod_fond_sofar = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}, {idx: 0.0 for idx in df_db.index}
     abs_map = {str(row['Priezvisko']).strip(): {'d': parse_days(row['Dovolenka']), 'kz': parse_days(row['KZ']), 'v': parse_days(row['Volno'])} for _, row in df_v_list.iterrows()}
 
-    # Predkalkulácia fondu pre dovolenky/KZ v pracovné dni smien
     for idx in df_db.index:
-        priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
+        priez = str(df_db.loc[idx, 'Priezvisko']).strip()
+        ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
         z_os = int(df_db.loc[idx, 'Zmena'])
         for d_val in (ab['d'] | ab['kz']):
             if d_val <= days_count:
                 if CYKLY[z_os][(date(r, m, d_val) - START_REF).days % 8] in ['D', 'N']: hod_fond_sofar[idx] += 11.5
 
-    # HLAVNÁ SLUČKA PLÁNOVANIA
     for d in range(1, days_count + 1):
         curr_d = date(r, m, d)
         is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
@@ -142,9 +153,9 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
                     fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
                     if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
 
-    # ZÁPIS EXCEL
+    # --- ZÁPIS EXCEL ---
     ws.set_column(0, 0, 25); ZZ = days_count + 10
-    for day in range(1, days_count + 1): ws.set_column(day, day, 3.5)
+    for d in range(1, days_count + 1): ws.set_column(d, d, 3.5)
     
     col_bg_map = {day: ('#40B4EE' if date(r,m,day) in SVIATKY_2026 else ('#FFCC66' if date(r,m,day).weekday()==5 else ('#CC9900' if date(r,m,day).weekday()==6 else '#FFFFFF'))) for day in range(1, days_count+1)}
     for day in range(1, days_count + 1): ws.write(0, day, day, wb.add_format({**fmt_b, 'bg_color': col_bg_map[day]}))
@@ -174,19 +185,12 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_cell = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
         ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_cell}", fmt_num)
-        
-        # PRIDANÉ: Podmienečné formátovanie pre kladný rozdiel (chýbajúce hodiny)
-        ws.conditional_format(row_ptr, days_count+2, row_ptr+1, days_count+2, {
-            'type':     'cell',
-            'criteria': '>',
-            'value':    0,
-            'format':   fmt_low
-        })
+        ws.conditional_format(row_ptr, days_count+2, row_ptr+1, days_count+2, {'type': 'cell', 'criteria': '>', 'value': 0, 'format': fmt_low})
 
     wb.close()
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
-# --- 3. UI ---
+# --- 4. UI ---
 st.set_page_config(page_title="Smart Plánovač 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
@@ -195,20 +199,35 @@ uploaded_file = st.file_uploader("Nahraj databaza_pozicii.xlsx", type="xlsx")
 if uploaded_file:
     ex = pd.ExcelFile(uploaded_file)
     df_db = ex.parse('Data').dropna(subset=['Priezvisko'])
-    df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
-    for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace('nan', '')
+    df_v_base = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
+    for col in ['Dovolenka', 'KZ', 'Volno']: df_v_base[col] = df_v_base[col].fillna("").astype(str).replace('nan', '')
 
     c1, c2, c3, c4 = st.columns(4)
-    mes = c1.selectbox("Mesiac", range(1, 13), index=2)
-    fon = c2.number_input("Fond", value=155.0)
-    parl, extra_w = c3.checkbox("Parlament", True), c4.checkbox("Extra W", True)
-    
+    mes = c1.selectbox("Mesiac", range(1, 13), index=datetime.now().month-1)
+    fon = c2.number_input("Fond", value=155.0); parl, extra_w = c3.checkbox("Parlament", True), c4.checkbox("Extra W", True)
     _, last_day = calendar.monthrange(2026, mes)
     p_od = st.date_input("Parlament Od", date(2026, mes, 1), format="DD/MM/YYYY")
     p_do = st.date_input("Parlament Do", date(2026, mes, last_day), format="DD/MM/YYYY")
     
-    st.session_state.df_v = st.data_editor(df_v, use_container_width=True, key="volno_edit")
+    st.subheader("Uprav absencie (D, KZ, V)")
     
-    if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
-        xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, st.session_state.df_v, extra_w, df_db)
+    if "editor_key" not in st.session_state:
+        st.session_state.editor_key = 0
+
+    df_v_edit = st.data_editor(df_v_base, use_container_width=True, key=f"volno_edit_{st.session_state.editor_key}")
+    
+    # Validácia
+    is_valid, error_msg = validate_input(df_v_edit)
+    if not is_valid:
+        st.error(error_msg)
+
+    col_btn1, col_btn2 = st.columns(2)
+    if col_btn1.button("🔄 Resetovať tabuľku", use_container_width=True):
+        st.session_state.editor_key += 1
+        st.rerun()
+
+    if col_btn2.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True, disabled=not is_valid):
+        xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db)
         st.download_button("📥 STIAHNUŤ VYGENEROVANÝ PLÁN", data=xlsx, file_name=name, use_container_width=True)
+else:
+    st.info("Nahrajte súbor 'databaza_pozicii.xlsx' pre začatie.")
