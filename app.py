@@ -54,15 +54,16 @@ def moze_nastupit(idx, d, smena, poz, vysledky):
 
 def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_limit, is_75_poz=False):
     pool = []
-    for idx in df_db.index:
+    for i in range(len(df_db)):
         try:
-            z_val = int(float(df_db.loc[idx, 'Zmena']))
+            z_val = int(float(df_db.iloc[i]['Zmena']))
+            idx = df_db.index[i]
             ma_cyk = CYKLY[z_val][(curr_d - START_REF).days % 8] == smena_target
             penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
             fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
             pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
         except: continue
-    return [x for x in sorted(pool, key=lambda x: x)]
+    return [x[0] for x in sorted(pool, key=lambda x: x[1])]
 
 def push_to_github(df_data, df_volno):
     if "GITHUB_TOKEN" not in st.secrets:
@@ -118,11 +119,13 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
                 'v': parse_days(row.get('Volno',''))
             }
 
-    for idx in df_db.index:
+    for i in range(len(df_db)):
         try:
-            priez = str(df_db.loc[idx, 'Priezvisko']).strip()
+            row = df_db.iloc[i]
+            idx = df_db.index[i]
+            priez = str(row['Priezvisko']).strip()
             ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
-            z_os = int(float(df_db.loc[idx, 'Zmena']))
+            z_os = int(float(row['Zmena']))
             for d_v in (ab['d'] | ab['kz']):
                 if 1 <= d_v <= days_count:
                     if CYKLY[z_os][(date(r, m, d_v) - START_REF).days % 8] in ['D', 'N']: hod_fond_sofar[idx] += 11.5
@@ -138,8 +141,9 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
                 if nas_z8: break
                 for idx in get_prioritized_people(df_db, curr_d, 'D', hod_fond_sofar, fond_limit, True):
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                    ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
+                    priez = str(df_db.loc[idx, 'Priezvisko'])
+                    if isinstance(priez, pd.Series): priez = priez.iloc[0] # Poistka proti duplicitám
+                    ab = abs_map.get(str(priez).strip(), {'d':set(), 'kz':set(), 'v':set()})
                     if d not in (ab['d']|ab['kz']|ab['v']) and str(df_db.loc[idx].get(col_f,'Nie')).lower()=='áno':
                         vysledky[d]['D'][idx] = "Z8"; hod_fond_sofar[idx] += 7.5; nas_z8 = True; break
 
@@ -147,10 +151,13 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
             for idx in df_db.index:
                 if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
                 try:
-                    z_os = int(float(df_db.loc[idx, 'Zmena']))
+                    z_val = df_db.loc[idx, 'Zmena']
+                    if isinstance(z_val, pd.Series): z_val = z_val.iloc[0]
+                    z_os = int(float(z_val))
                     if CYKLY[z_os][(curr_d - START_REF).days % 8] == smena and str(df_db.loc[idx].get('C1','Nie')).lower() == 'áno':
-                        priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                        ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
+                        priez = df_db.loc[idx, 'Priezvisko']
+                        if isinstance(priez, pd.Series): priez = priez.iloc[0]
+                        ab = abs_map.get(str(priez).strip(), {'d':set(), 'kz':set(), 'v':set()})
                         if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, smena, 'C1', vysledky):
                             vysledky[d][smena][idx] = 'C1'; hod_fond_sofar[idx] += 11.5; break
                 except: continue
@@ -160,19 +167,25 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
                 pool, nas = get_prioritized_people(df_db, curr_d, smena, hod_fond_sofar, fond_limit), False
                 for idx in pool:
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    z_os = int(float(df_db.loc[idx, 'Zmena']))
+                    z_val = df_db.loc[idx, 'Zmena']
+                    if isinstance(z_val, pd.Series): z_val = z_val.iloc[0]
+                    z_os = int(float(z_val))
                     if str(df_db.loc[idx].get(f"Priorita_{p_n}",'Nie')).lower() == 'áno' and CYKLY[z_os][(curr_d - START_REF).days % 8] == smena:
-                        priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                        ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
+                        priez = df_db.loc[idx, 'Priezvisko']
+                        if isinstance(priez, pd.Series): priez = priez.iloc[0]
+                        ab = abs_map.get(str(priez).strip(), {'d':set(), 'kz':set(), 'v':set()})
                         if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, smena, p_n, vysledky):
                             vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
                 if not nas:
                     for idx in pool:
                         if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        z_os = int(float(df_db.loc[idx, 'Zmena']))
+                        z_val = df_db.loc[idx, 'Zmena']
+                        if isinstance(z_val, pd.Series): z_val = z_val.iloc[0]
+                        z_os = int(float(z_val))
                         if str(df_db.loc[idx].get(p_n,'Nie')).lower() == 'áno' and CYKLY[z_os][(curr_d - START_REF).days % 8] == smena:
-                            priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                            ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
+                            priez = df_db.loc[idx, 'Priezvisko']
+                            if isinstance(priez, pd.Series): priez = priez.iloc[0]
+                            ab = abs_map.get(str(priez).strip(), {'d':set(), 'kz':set(), 'v':set()})
                             if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, smena, p_n, vysledky):
                                 vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
 
@@ -182,8 +195,9 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
                     if poz in vysledky[d]['D'].values(): continue
                     for idx in get_prioritized_people(df_db, curr_d, 'D', hod_fond_sofar, fond_limit):
                         if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                        ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
+                        priez = df_db.loc[idx, 'Priezvisko']
+                        if isinstance(priez, pd.Series): priez = priez.iloc[0]
+                        ab = abs_map.get(str(priez).strip(), {'d':set(), 'kz':set(), 'v':set()})
                         p_col = poz if poz != 'W_EXTRA' else 'W1'
                         if d not in (ab['d']|ab['kz']|ab['v']) and str(df_db.loc[idx].get(p_col,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, 'D', poz, vysledky):
                             vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
@@ -192,8 +206,9 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
                 if poz in vysledky[d][smena].values(): continue
                 for idx in get_prioritized_people(df_db, curr_d, smena, hod_fond_sofar, fond_limit):
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                    ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
+                    priez = df_db.loc[idx, 'Priezvisko']
+                    if isinstance(priez, pd.Series): priez = priez.iloc[0]
+                    ab = abs_map.get(str(priez).strip(), {'d':set(), 'kz':set(), 'v':set()})
                     if d not in (ab['d']|ab['kz']|ab['v']) and str(df_db.loc[idx].get(poz,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, smena, poz, vysledky):
                         vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
 
@@ -202,8 +217,9 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
             trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
             for idx in get_prioritized_people(df_db, curr_d, 'D', hod_fond_sofar, fond_limit, True):
                 if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
+                priez = df_db.loc[idx, 'Priezvisko']
+                if isinstance(priez, pd.Series): priez = priez.iloc[0]
+                ab = abs_map.get(str(priez).strip(), {'d':set(), 'kz':set(), 'v':set()})
                 if d not in (ab['d']|ab['kz']|ab['v']):
                     fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
                     if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
@@ -218,7 +234,9 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
     ws.write(0, days_count+1, "Sumár", workbook.add_format({'bold':True, 'border':1}))
     ws.write(0, days_count+2, "Rozdiel", workbook.add_format({'bold':True, 'border':1}))
 
-    for i, (idx, row) in enumerate(df_db.iterrows()):
+    for i in range(len(df_db)):
+        row = df_db.iloc[i]
+        idx = df_db.index[i]
         zebra, row_ptr = ('#FFFF00' if i % 2 == 1 else '#FFFFFF'), i*2+1
         z_num = str(int(float(row['Zmena'])))
         ws.merge_range(row_ptr, 0, row_ptr+1, 0, f"{row['Priezvisko']} {row['Meno']}", z_fmts.get(z_num, z_fmts['1']))
@@ -264,9 +282,7 @@ if os.path.exists(DB_FILENAME):
     ex = pd.ExcelFile(DB_FILENAME, engine='openpyxl')
     df_db_raw = ex.parse('Data').dropna(subset=['Priezvisko'])
     df_v_raw = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
-    
-    for col in ['Dovolenka', 'KZ', 'Volno']:
-        df_v_raw[col] = df_v_raw[col].fillna("").astype(str).replace('nan', '')
+    for col in ['Dovolenka', 'KZ', 'Volno']: df_v_raw[col] = df_v_raw[col].fillna("").astype(str).replace('nan', '')
 
     t1, t2 = st.tabs(["📊 Plánovanie", "⚙️ Databáza"])
     with t2:
@@ -280,22 +296,17 @@ if os.path.exists(DB_FILENAME):
         parl = c3.checkbox("Parlament", True)
         extra_w = c4.checkbox("Extra W", True)
         
-        # POLIA PRE PARLAMENT S OPRAVENÝM SLOVENSKÝM FORMÁTOM (DD.MM.YYYY)
         _, last_day = calendar.monthrange(2026, mes)
         p_od, p_do = date(2026, mes, 1), date(2026, mes, last_day)
         
         if parl:
             cp1, cp2 = st.columns(2)
-            # Parametr format='DD.MM.YYYY' nastavuje slovenský štandard
             p_od = cp1.date_input("Parlament od", p_od, format="DD.MM.YYYY")
             p_do = cp2.date_input("Parlament do", p_do, format="DD.MM.YYYY")
         
-        st.subheader("Absencie (Dovolenka, Kurz, Voľno)")
         df_v_edit = st.data_editor(df_v_raw, use_container_width=True, key="v_ed", num_rows="dynamic")
-        
         if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"):
             if push_to_github(df_db_edit, df_v_edit): st.success("Absencie uložené!")
-        
         if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
             with st.spinner("Generujem plán..."):
                 xlsx, name = generuj_final_streamlit(mes, 2026, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db_edit)
