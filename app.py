@@ -23,7 +23,7 @@ CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILENAME = os.path.join(BASE_DIR, 'databaza_pozicii.xlsx')
 
-# DOPLŇ CESTU: pouzivatel/repozitar
+# !!! SEM DOPLŇ SVOJU CESTU K REPOZITÁRU NA GITHUBE (napr. "pouzivatel/repozitar") !!!
 REPO_PATH = "TVOJE_MENO/TVOJ_REPOZITAR" 
 
 # --- 2. POMOCNÉ FUNKCIE ---
@@ -77,23 +77,24 @@ def push_to_github(df_data, df_volno):
     try:
         res = requests.get(url, headers=headers)
         sha = res.json().get('sha') if res.status_code == 200 else None
-        payload = {"message": f"Update {datetime.now()}", "content": base64.b64encode(content).decode(), "sha": sha}
+        payload = {"message": f"Aktualizácia dát {datetime.now()}", "content": base64.b64encode(content).decode(), "sha": sha}
         r = requests.put(url, json=payload, headers=headers)
-        return r.status_code in 
-    except: return False
+        return r.status_code in [200, 201]
+    except Exception as e:
+        st.error(f"GitHub Error: {e}")
+        return False
 
-# --- 3. GENEROVANIE (Vylepšená stabilita) ---
+# --- 3. GENEROVANIE ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_volno_edited, use_extra_w, df_db):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook, ws, ws_miss = writer.book, writer.book.add_worksheet("Plán"), writer.book.add_worksheet("Neobsadené")
         fmt_b = {'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': False, 'font_size': 9}
         fmt_sep = {**fmt_b, 'bottom': 2}
-        z_fmts = {str(i): workbook.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc}) for i, c, fc in zip([1,2,3,4], ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
+        z_fmts = {str(i): workbook.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc}) for i, c, fc in zip([1, 2, 3, 4], ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
         f_d, f_kz, f_v = workbook.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
         fmt_num, fmt_low = workbook.add_format({**fmt_sep, 'num_format': '#,##0.0'}), workbook.add_format({**fmt_sep, 'bg_color': '#FF9900', 'num_format': '#,##0.0'})
-        f_c1_d = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
-        f_c1_n = workbook.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
+        f_c1_d, f_c1_n = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True}), workbook.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
 
         _, days_count = calendar.monthrange(r, m)
         vysledky, hod_fond_sofar = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}, {idx: 0.0 for idx in df_db.index}
@@ -104,15 +105,14 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
             ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
             z_os = int(df_db.loc[idx, 'Zmena'])
             for d_v in (ab['d'] | ab['kz']):
-                if 1 <= d_v <= days_count: # OPRAVA: Kontrola rozsahu dní
+                if 1 <= d_v <= days_count:
                     try:
                         if CYKLY[z_os][(date(r, m, d_v) - START_REF).days % 8] in ['D', 'N']: hod_fond_sofar[idx] += 11.5
-                    except ValueError: continue
+                    except: continue
 
         for d in range(1, days_count + 1):
             curr_d = date(r, m, d)
             is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
-            
             if is_workday:
                 nas_z8 = False
                 for col_f in ["Priorita_Z8", "Z8"]:
