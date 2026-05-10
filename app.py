@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-import calendar, random, io, os, xlsxwriter, base64, requests
+import calendar, random, io, os, xlsxwriter, base64, requests, time
 from datetime import date, datetime
 
-# --- 1. KONFIGURÁCIA (Presne podľa tvojho originálu) ---
+# --- 1. KONFIGURÁCIA ---
 SVIATKY_2026 = {
     date(2026,1,1), date(2026,1,6), date(2026,4,3), date(2026,4,6),
     date(2026,5,1), date(2026,5,8), date(2026,7,5), date(2026,8,29),
@@ -17,7 +17,7 @@ DB_FILENAME = 'databaza_pozicii.xlsx'
 REPO_USER = "haluskamartin76"
 REPO_NAME = "planovac-smien"
 
-# --- 2. POMOCNÉ FUNKCIE (Tvoj originál) ---
+# --- 2. POMOCNÉ FUNKCIE ---
 def parse_days(s):
     res = set()
     if pd.isna(s) or str(s).lower() == 'nan' or str(s).strip() == "": return res
@@ -42,6 +42,17 @@ def moze_nastupit(idx, d, smena, poz, vysledky):
     if d > 2 and idx in vysledky[d-1][smena] and idx in vysledky[d-2][smena]: return False
     return True
 
+# NOVÉ: Načítanie priamo z GitHub API (vždy aktuálne)
+def load_from_github():
+    if "GITHUB_TOKEN" not in st.secrets: return None
+    url = f"https://github.com{REPO_USER}/{REPO_NAME}/contents/{DB_FILENAME}?t={int(time.time())}"
+    headers = {"Authorization": f"token {st.secrets['GITHUB_TOKEN']}", "Accept": "application/vnd.github.v3.raw"}
+    try:
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200: return io.BytesIO(res.content)
+    except: pass
+    return None
+
 def push_to_github(df_data, df_volno):
     if "GITHUB_TOKEN" not in st.secrets: return False
     output = io.BytesIO()
@@ -54,12 +65,12 @@ def push_to_github(df_data, df_volno):
     try:
         res = requests.get(url, headers=headers)
         sha = res.json().get('sha') if res.status_code == 200 else None
-        payload = {"message": "Update via Streamlit", "content": base64.b64encode(content).decode(), "sha": sha}
-        requests.put(url, json=payload, headers=headers)
-        return True
+        payload = {"message": f"Update {datetime.now().strftime('%H:%M')}", "content": base64.b64encode(content).decode(), "sha": sha}
+        r = requests.put(url, json=payload, headers=headers)
+        return r.status_code in [200, 201]
     except: return False
 
-# --- 3. GENEROVANIE (Tvoj originál, upravený len pre Streamlit export) ---
+# --- 3. GENEROVANIE (Tvoja originálna logika) ---
 def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_extra_w, df_db):
     output = io.BytesIO()
     wb = xlsxwriter.Workbook(output)
@@ -76,8 +87,6 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
 
     _, days_count = calendar.monthrange(r, m)
     vysledky, hod_fond_sofar = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}, {idx: 0.0 for idx in df_db.index}
-
-    # Príprava absencií (z tabuľky editora)
     abs_map = {str(row['Priezvisko']).strip(): {'d': parse_days(row['Dovolenka']), 'kz': parse_days(row['KZ']), 'v': parse_days(row['Volno'])} for _, row in df_v_list.iterrows()}
 
     for idx in df_db.index:
@@ -122,7 +131,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
 
             for p_n in ['ZT', 'NB']:
                 if p_n in vysledky[d][smena].values() or (p_n == 'NB' and smena == 'D' and is_workday): continue
-                pool, nas = get_prioritized_people(smena), False
+                pool = get_prioritized_people(smena)
+                nas = False
                 for idx in pool:
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
                     if str(df_db.loc[idx].get(f"Priorita_{p_n}",'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
@@ -212,20 +222,24 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
 st.set_page_config(page_title="Smart Plánovač 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
-if os.path.exists(DB_FILENAME):
-    if 'df_db' not in st.session_state:
-        ex = pd.ExcelFile(DB_FILENAME)
+# Inicilizácia a načítanie dát
+if 'df_db' not in st.session_state:
+    db_file = load_from_github()
+    if db_file:
+        ex = pd.ExcelFile(db_file)
         st.session_state.df_db = ex.parse('Data').dropna(subset=['Priezvisko'])
-        df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Dovolenka', 'KZ', 'Volno'])
+        df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
         for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace('nan', '')
         st.session_state.df_v = df_v
+    else: st.error("Chyba načítania z GitHubu!")
 
+if 'df_db' in st.session_state:
     t1, t2 = st.tabs(["📊 Plánovanie", "⚙️ Databáza"])
     with t2:
         st.session_state.df_db = st.data_editor(st.session_state.df_db, use_container_width=True, key="db_ed")
-        if st.button("💾 ULOŽIŤ PERSONÁL"):
-            push_to_github(st.session_state.df_db, st.session_state.df_v)
-            st.success("Personál uložený na GitHub!")
+        if st.button("💾 ULOŽIŤ PERSONÁL NA GITHUB"):
+            if push_to_github(st.session_state.df_db, st.session_state.df_v): st.success("Uložené na GitHub!")
+            else: st.error("Chyba ukladania!")
     with t1:
         c1, c2, c3, c4 = st.columns(4)
         mes = c1.selectbox("Mesiac", range(1, 13), index=datetime.now().month-1)
@@ -236,12 +250,10 @@ if os.path.exists(DB_FILENAME):
         p_do = st.date_input("Do", date(2026, mes, last_day), format="DD.MM.YYYY")
         
         st.session_state.df_v = st.data_editor(st.session_state.df_v, use_container_width=True, key="v_ed")
-        if st.button("💾 ULOŽIŤ ABSENCIE"):
-            push_to_github(st.session_state.df_db, st.session_state.df_v)
-            st.success("Absencie uložené na GitHub!")
+        if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"):
+            if push_to_github(st.session_state.df_db, st.session_state.df_v): st.success("Absencie uložené na GitHub!")
+            else: st.error("Chyba ukladania!")
         
         if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
             xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, st.session_state.df_v, extra_w, st.session_state.df_db)
             st.download_button("📥 STIAHNUŤ", data=xlsx, file_name=name, use_container_width=True)
-else:
-    st.error("Chýba súbor databaza_pozicii.xlsx!")
