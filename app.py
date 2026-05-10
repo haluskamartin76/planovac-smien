@@ -189,3 +189,44 @@ with t1:
     if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
         xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, st.session_state.df_v, extra_w, st.session_state.df_db)
         st.download_button("📥 STIAHNUŤ", data=xlsx, file_name=name, use_container_width=True)
+def push_to_github(df_data, df_volno):
+    if "GITHUB_TOKEN" not in st.secrets:
+        st.error("❌ Chýba GITHUB_TOKEN v Secrets!")
+        return False
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_data.to_excel(writer, sheet_name='Data', index=False)
+        df_volno.to_excel(writer, sheet_name='Volno', index=False)
+    
+    content = output.getvalue()
+    token = st.secrets["GITHUB_TOKEN"]
+    
+    # FIX: Absolútna a presná cesta k tvojmu súboru
+    url = "https://github.com"
+    
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    try:
+        res = requests.get(url, headers=headers)
+        sha = res.json().get('sha') if res.status_code == 200 else None
+        
+        payload = {
+            "message": f"Aktualizácia {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            "content": base64.b64encode(content).decode(),
+            "sha": sha
+        }
+        
+        r = requests.put(url, json=payload, headers=headers)
+        if r.status_code in [200, 201]:
+            st.success("✅ Úspešne uložené na GitHub!")
+            return True
+        else:
+            st.error(f"❌ GitHub API chyba: {r.status_code} - {r.text}")
+            return False
+    except Exception as e:
+        st.error(f"❌ Chyba spojenia: {e}")
+        return False
