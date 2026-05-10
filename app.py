@@ -62,7 +62,7 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
             fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
             pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
         except: continue
-    return [x[0] for x in sorted(pool, key=lambda x: x[1])]
+    return [x for x in sorted(pool, key=lambda x: x)]
 
 def push_to_github(df_data, df_volno):
     if "GITHUB_TOKEN" not in st.secrets:
@@ -99,6 +99,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
     fmt_sep = {**fmt_b, 'bottom': 2}
     z_fmts = {str(i+1): workbook.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc}) 
               for i, (c, fc) in enumerate(zip(['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white']))}
+    
     f_d, f_kz, f_v = workbook.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
     fmt_num, fmt_low = workbook.add_format({**fmt_sep, 'num_format': '#,##0.0'}), workbook.add_format({**fmt_sep, 'bg_color': '#FF9900', 'num_format': '#,##0.0'})
     f_c1_d = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
@@ -280,11 +281,14 @@ if os.path.exists(DB_FILENAME):
         extra_w = c4.checkbox("Extra W", True)
         
         # POLIA PRE PARLAMENT (Zobrazia sa len ak je zaškrtnutý)
-        p_od, p_do = date(2026, 3, 10), date(2026, 3, 20)
+        # Predvolene nastavené na celý mesiac (od 1. do konca mesiaca)
+        _, last_day = calendar.monthrange(2026, mes)
+        p_od, p_do = date(2026, mes, 1), date(2026, mes, last_day)
+        
         if parl:
             cp1, cp2 = st.columns(2)
-            p_od = cp1.date_input("Parlament od", date(2026, mes, 10))
-            p_do = cp2.date_input("Parlament do", date(2026, mes, 20))
+            p_od = cp1.date_input("Parlament od", p_od)
+            p_do = cp2.date_input("Parlament do", p_do)
         
         st.subheader("Absencie (Dovolenka, Kurz, Voľno)")
         df_v_edit = st.data_editor(df_v_raw, use_container_width=True, key="v_ed", num_rows="dynamic")
