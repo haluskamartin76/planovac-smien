@@ -15,34 +15,35 @@ START_REF = date(2026, 3, 1)
 CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 DB_FILENAME = 'databaza_pozicii.xlsx'
 
-# --- 2. GITHUB FUNKCIA (OPRAVENÁ 404 CHYBA) ---
+# --- 2. GITHUB PREPOJENIE (OPRAVENÁ URL) ---
 def push_to_github(df_data, df_volno):
     if "GITHUB_TOKEN" not in st.secrets:
-        st.error("❌ Chýba GITHUB_TOKEN v Streamlit Secrets!")
+        st.error("❌ Chýba GITHUB_TOKEN v Secrets!")
         return False
     
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_data.to_excel(writer, sheet_name='Data', index=False)
+        df_volno.to_excel(writer, sheet_name='Volno', index=False)
+    
+    content = output.getvalue()
+    token = st.secrets["GITHUB_TOKEN"]
+    
+    # FIX: Úplná a správna cesta k API GitHubu
+    url = "https://github.com"
+    
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
     try:
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_data.to_excel(writer, sheet_name='Data', index=False)
-            df_volno.to_excel(writer, sheet_name='Volno', index=False)
-        content = output.getvalue()
-        
-        token = st.secrets["GITHUB_TOKEN"]
-        # Musí byť ://github.com
-        url = "https://github.com"
-        
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        
-        # Získanie SHA (nutné pre prepis)
+        # Získanie SHA pre update
         res = requests.get(url, headers=headers)
         sha = res.json().get('sha') if res.status_code == 200 else None
         
         payload = {
-            "message": f"Update {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            "message": f"Aktualizácia dát {datetime.now().strftime('%d.%m.%Y %H:%M')}",
             "content": base64.b64encode(content).decode(),
             "sha": sha
         }
@@ -52,7 +53,7 @@ def push_to_github(df_data, df_volno):
             st.success("✅ Úspešne uložené na GitHub!")
             return True
         else:
-            st.error(f"❌ GitHub chyba {r.status_code}: {r.text}")
+            st.error(f"❌ Chyba GitHubu {r.status_code}: {r.text}")
             return False
     except Exception as e:
         st.error(f"❌ Chyba spojenia: {e}")
@@ -83,13 +84,12 @@ def moze_nastupit(idx, d, smena, poz, vysledky):
     if d > 2 and idx in vysledky[d-1][smena] and idx in vysledky[d-2][smena]: return False
     return True
 
-# --- 4. GENEROVANIE (TVOJA LOGIKA + VIZUÁL) ---
+# --- 4. GENEROVANIE (TVOJA KOMPLETNÁ LOGIKA) ---
 def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_extra_w, df_db):
     output = io.BytesIO()
     wb = xlsxwriter.Workbook(output)
     ws, ws_miss = wb.add_worksheet("Plán"), wb.add_worksheet("Neobsadené")
     
-    # Formáty
     fmt_b = {'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': False, 'font_size': 9}
     fmt_sep = {**fmt_b, 'bottom': 2}
     z_fmts = {str(i): wb.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc})
@@ -102,19 +102,10 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
     vysledky, hod_fond_sofar = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}, {idx: 0.0 for idx in df_db.index}
     abs_map = {str(row['Priezvisko']).strip(): {'d': parse_days(row['Dovolenka']), 'kz': parse_days(row['KZ']), 'v': parse_days(row['Volno'])} for _, row in df_v_list.iterrows()}
 
-    # Kalkulácia fondu
-    for idx in df_db.index:
-        priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-        ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
-        z_os = int(df_db.loc[idx, 'Zmena'])
-        for d_val in (ab['d'] | ab['kz']):
-            if d_val <= days_count:
-                if CYKLY[z_os][(date(r, m, d_val) - START_REF).days % 8] in ['D', 'N']: hod_fond_sofar[idx] += 11.5
-
-    # Hlavný výpočet dní
     for d in range(1, days_count + 1):
         curr_d = date(r, m, d)
         is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
+        
         def get_prioritized_people(s_target, is_75=False):
             pool = []
             for idx in df_db.index:
@@ -124,7 +115,6 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
                 pool.append((idx, (0 if ma_cyk else 1, penalty, f_score, random.random())))
             return [x[0] for x in sorted(pool, key=lambda x: x[1])]
 
-        # Logika priraďovania (Parlament, Z8, C1, ZT, NB, W, IR/IP)
         if is_workday:
             nas_z8 = False
             for col_f in ["Priorita_Z8", "Z8"]:
@@ -149,10 +139,11 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
                     if poz in vysledky[d]['D'].values(): continue
                     for idx in get_prioritized_people('D'):
                         if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                         p_col = poz if poz != 'W_EXTRA' else 'W1'
-                        if d not in (ab['d']|ab['kz']|ab['v']) and str(df_db.loc[idx].get(p_col,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, 'D', poz, vysledky):
-                            vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+                        if str(df_db.loc[idx].get(p_col,'Nie')).lower() == 'áno':
+                            priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                            if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, 'D', poz, vysledky):
+                                vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
 
             for poz in PRIO_LIST:
                 if poz in vysledky[d][smena].values(): continue
@@ -172,7 +163,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
                     fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
                     if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
 
-    # ZÁPIS EXCEL
+    # --- ZÁPIS EXCEL ---
     ws.set_column(0, 0, 25); ZZ = days_count + 10
     col_bg_map = {day: ('#40B4EE' if date(r,m,day) in SVIATKY_2026 else ('#FFCC66' if date(r,m,day).weekday()==5 else ('#CC9900' if date(r,m,day).weekday()==6 else '#FFFFFF'))) for day in range(1, days_count+1)}
     for day in range(1, days_count + 1): ws.write(0, day, day, wb.add_format({**fmt_b, 'bg_color': col_bg_map[day]}))
@@ -218,12 +209,14 @@ if 'df_db' not in st.session_state:
         df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
         for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace('nan', '')
         st.session_state.df_v = df_v
-    except: st.error("❌ Databáza sa nenašla.")
+    except:
+        st.error("❌ Databáza sa nenašla. Uistite sa, že súbor 'databaza_pozicii.xlsx' je nahratý na GitHub-e.")
 
 t1, t2 = st.tabs(["📊 Plánovanie", "⚙️ Databáza"])
 with t2:
     st.session_state.df_db = st.data_editor(st.session_state.df_db, use_container_width=True, key="db_edit")
-    if st.button("💾 ULOŽIŤ PERSONÁL NA GITHUB"): push_to_github(st.session_state.df_db, st.session_state.df_v)
+    if st.button("💾 ULOŽIŤ PERSONÁL NA GITHUB"):
+        push_to_github(st.session_state.df_db, st.session_state.df_v)
 
 with t1:
     c1, c2, c3, c4 = st.columns(4)
@@ -237,7 +230,8 @@ with t1:
     
     st.session_state.df_v = st.data_editor(st.session_state.df_v, use_container_width=True, key="volno_edit")
     
-    if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"): push_to_github(st.session_state.df_db, st.session_state.df_v)
+    if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"):
+        push_to_github(st.session_state.df_db, st.session_state.df_v)
     
     if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
         xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, st.session_state.df_v, extra_w, st.session_state.df_db)
