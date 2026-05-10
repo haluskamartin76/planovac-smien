@@ -39,6 +39,9 @@ def moze_nastupit(idx, d, smena, poz, vysledky):
     return True
 
 def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_extra_w, df_db):
+    # VRÁTENIE PORADIA NA PÔVODNÉ PODĽA INDEXU
+    df_db = df_db.sort_values(by='Povodne_Poradie')
+    
     output = io.BytesIO()
     wb = xlsxwriter.Workbook(output)
     ws = wb.add_worksheet("Plán")
@@ -222,15 +225,15 @@ uploaded_file = st.file_uploader("Nahraj databaza_pozicii.xlsx", type="xlsx")
 if uploaded_file:
     ex = pd.ExcelFile(uploaded_file)
     
-    # NAČÍTANIE A ZORADENIE PODĽA PRIEZVISKA
+    # 1. NAČÍTANIE + ULOŽENIE PÔVODNÉHO PORADIA
     df_db = ex.parse('Data').dropna(subset=['Priezvisko'])
-    df_db = df_db.sort_values(by=['Priezvisko', 'Meno']).reset_index(drop=True)
+    df_db['Povodne_Poradie'] = range(len(df_db))
     
     df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
     for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace(['nan', 'None'], '')
     
-    # Zabezpečíme, aby aj tabuľka absencií bola zoradená abecedne
-    df_v = df_v.sort_values(by=['Priezvisko', 'Meno']).reset_index(drop=True)
+    # Pridáme pôvodné poradie aj do tabuľky volno pre synchronizáciu
+    df_v = df_v.merge(df_db[['Priezvisko', 'Meno', 'Povodne_Poradie']], on=['Priezvisko', 'Meno'], how='left')
 
     c1, c2, c3, c4 = st.columns(4)
     mes = c1.selectbox("Mesiac", range(1, 13), index=2)
@@ -241,17 +244,23 @@ if uploaded_file:
     p_od = st.date_input("Parlament Od", date(2026, mes, 1), format="DD/MM/YYYY")
     p_do = st.date_input("Parlament Do", date(2026, mes, last_day), format="DD/MM/YYYY")
     
-    st.subheader("Uprav absencie (D, KZ, V)")
+    st.subheader("Uprav absencie (zoradené abecedne pre pohodlie)")
+    
+    # EDITOR ZORADÍME ABECEDNE
+    df_v_alphabetical = df_v.sort_values(by=['Priezvisko', 'Meno'])
+    
     df_v_edit = st.data_editor(
-        df_v, 
+        df_v_alphabetical, 
         use_container_width=True, 
         key="volno_edit",
         column_config={
             "Priezvisko": st.column_config.Column(disabled=True),
             "Meno": st.column_config.Column(disabled=True),
+            "Povodne_Poradie": None # Skryjeme pomocný stĺpec
         }
     )
     
     if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
+        # Pri generovaní posielame df_db, ktorý si vnútri funkcie generuj_final zoradí dáta podľa Povodne_Poradie
         xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db)
         st.download_button("📥 STIAHNUŤ VYGENEROVANÝ PLÁN", data=xlsx, file_name=name, use_container_width=True)
