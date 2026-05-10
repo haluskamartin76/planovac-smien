@@ -23,8 +23,9 @@ CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILENAME = os.path.join(BASE_DIR, 'databaza_pozicii.xlsx')
 
-# NASTAVENÁ CESTA K TVOJMU REPOZITÁRU
-REPO_PATH = "haluskamartin76/planovac-smien" 
+# CESTA K TVOJM REPOZITÁRU
+REPO_USER = "haluskamartin76"
+REPO_NAME = "planovac-smien"
 
 # --- 2. POMOCNÉ FUNKCIE ---
 def parse_days(s):
@@ -74,26 +75,29 @@ def push_to_github(df_data, df_volno):
     
     content = output.getvalue()
     token = st.secrets["GITHUB_TOKEN"]
-    # OPRAVENÁ ADRESA PRE GITHUB API
-    url = f"https://github.com{REPO_PATH}/contents/databaza_pozicii.xlsx"
-    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+    # OPRAVENÁ API URL
+    url = f"https://github.com{REPO_USER}/{REPO_NAME}/contents/databaza_pozicii.xlsx"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
     
     try:
         res = requests.get(url, headers=headers)
         sha = res.json().get('sha') if res.status_code == 200 else None
         
         payload = {
-            "message": f"Update databázy {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            "message": f"Aktualizácia dát {datetime.now().strftime('%d.%m.%Y %H:%M')}",
             "content": base64.b64encode(content).decode(),
             "sha": sha
         }
         r = requests.put(url, json=payload, headers=headers)
         return r.status_code in [200, 201]
     except Exception as e:
-        st.error(f"Chyba pripojenia: {e}")
+        st.error(f"GitHub Error: {e}")
         return False
 
-# --- 3. GENEROVANIE ---
+# --- 3. HLAVNÁ LOGIKA GENERÁTORA ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_volno_edited, use_extra_w, df_db):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
