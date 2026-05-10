@@ -28,7 +28,6 @@ REPO_NAME = "planovac-smien"
 # --- 2. POMOCNÉ FUNKCIE ---
 def parse_days(s):
     res = set()
-    # OPRAVA: Ošetrenie prázdnych hodnôt pre Pandas NAType
     if pd.isna(s) or str(s).lower() == 'nan' or str(s).strip() == "": 
         return res
     try:
@@ -108,7 +107,6 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
     _, days_count = calendar.monthrange(r, m)
     vysledky, hod_fond_sofar = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}, {idx: 0.0 for idx in df_db.index}
     
-    # OPRAVA: Prevod všetkých hodnôt na string pred stripovaním
     abs_map = {}
     for _, row in df_volno_edited.iterrows():
         priez = str(row.get('Priezvisko', '')).strip()
@@ -266,7 +264,6 @@ if os.path.exists(DB_FILENAME):
     df_db_raw = ex.parse('Data').dropna(subset=['Priezvisko'])
     df_v_raw = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
     
-    # OPRAVA: Pre-clean dát pre editor
     for col in ['Dovolenka', 'KZ', 'Volno']:
         df_v_raw[col] = df_v_raw[col].fillna("").astype(str).replace('nan', '')
 
@@ -282,14 +279,22 @@ if os.path.exists(DB_FILENAME):
         parl = c3.checkbox("Parlament", True)
         extra_w = c4.checkbox("Extra W", True)
         
-        # OPRAVA: data_editor teraz dostáva vyčistené dáta
+        # POLIA PRE PARLAMENT (Zobrazia sa len ak je zaškrtnutý)
+        p_od, p_do = date(2026, 3, 10), date(2026, 3, 20)
+        if parl:
+            cp1, cp2 = st.columns(2)
+            p_od = cp1.date_input("Parlament od", date(2026, mes, 10))
+            p_do = cp2.date_input("Parlament do", date(2026, mes, 20))
+        
+        st.subheader("Absencie (Dovolenka, Kurz, Voľno)")
         df_v_edit = st.data_editor(df_v_raw, use_container_width=True, key="v_ed", num_rows="dynamic")
         
         if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"):
             if push_to_github(df_db_edit, df_v_edit): st.success("Absencie uložené!")
         
         if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
-            xlsx, name = generuj_final_streamlit(mes, 2026, fon, parl, date(2026,3,10), date(2026,3,20), df_v_edit, extra_w, df_db_edit)
-            st.download_button("📥 STIAHNUŤ EXCEL", data=xlsx, file_name=name, use_container_width=True)
+            with st.spinner("Generujem plán..."):
+                xlsx, name = generuj_final_streamlit(mes, 2026, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db_edit)
+                st.download_button("📥 STIAHNUŤ EXCEL", data=xlsx, file_name=name, use_container_width=True)
 else:
     st.error(f"Súbor {DB_FILENAME} chýba!")
