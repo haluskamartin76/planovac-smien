@@ -59,13 +59,11 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     vysledky = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}
     hod_fond_sofar = {idx: 0.0 for idx in df_db.index}
 
-    # Mapovanie absencií z editora
     abs_map = {}
     for _, row in df_v_edit.iterrows():
         priez = str(row['Priezvisko']).strip()
         abs_map[priez] = {'d': parse_days(row['Dovolenka']), 'kz': parse_days(row['KZ']), 'v': parse_days(row['Volno'])}
 
-    # Pre-kalkulácia D a KZ podľa cyklu
     for idx in df_db.index:
         priez = str(df_db.loc[idx, 'Priezvisko']).strip()
         ab = abs_map.get(priez, {'d':set(), 'kz':set()})
@@ -76,7 +74,6 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 if CYKLY[z_os][(date(r, m, d_val) - START_REF).days % 8] in ['D', 'N']:
                     hod_fond_sofar[idx] += 11.5
 
-    # --- JADRO ALGORITMU (TVOJ ORIGINÁL) ---
     for d in range(1, days_count + 1):
         curr_d = date(r, m, d)
         is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
@@ -164,7 +161,6 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                     fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
                     if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
 
-    # --- ZÁPIS DO EXCELU ---
     ws.set_column(0, 0, 25)
     for d in range(1, days_count + 1): ws.set_column(d, d, 3.5)
     ws.set_column(days_count+1, days_count+2, 10)
@@ -225,9 +221,16 @@ uploaded_file = st.file_uploader("Nahraj databaza_pozicii.xlsx", type="xlsx")
 
 if uploaded_file:
     ex = pd.ExcelFile(uploaded_file)
+    
+    # NAČÍTANIE A ZORADENIE PODĽA PRIEZVISKA
     df_db = ex.parse('Data').dropna(subset=['Priezvisko'])
+    df_db = df_db.sort_values(by=['Priezvisko', 'Meno']).reset_index(drop=True)
+    
     df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
     for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace(['nan', 'None'], '')
+    
+    # Zabezpečíme, aby aj tabuľka absencií bola zoradená abecedne
+    df_v = df_v.sort_values(by=['Priezvisko', 'Meno']).reset_index(drop=True)
 
     c1, c2, c3, c4 = st.columns(4)
     mes = c1.selectbox("Mesiac", range(1, 13), index=2)
@@ -239,7 +242,15 @@ if uploaded_file:
     p_do = st.date_input("Parlament Do", date(2026, mes, last_day), format="DD/MM/YYYY")
     
     st.subheader("Uprav absencie (D, KZ, V)")
-    df_v_edit = st.data_editor(df_v, use_container_width=True, key="volno_edit")
+    df_v_edit = st.data_editor(
+        df_v, 
+        use_container_width=True, 
+        key="volno_edit",
+        column_config={
+            "Priezvisko": st.column_config.Column(disabled=True),
+            "Meno": st.column_config.Column(disabled=True),
+        }
+    )
     
     if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
         xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db)
