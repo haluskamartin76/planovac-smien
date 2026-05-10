@@ -280,15 +280,15 @@ if os.path.exists(DB_FILENAME):
         parl = c3.checkbox("Parlament", True)
         extra_w = c4.checkbox("Extra W", True)
         
-        # POLIA PRE PARLAMENT (Zobrazia sa len ak je zaškrtnutý)
-        # Predvolene nastavené na celý mesiac (od 1. do konca mesiaca)
+        # POLIA PRE PARLAMENT S OPRAVENÝM SLOVENSKÝM FORMÁTOM (DD.MM.YYYY)
         _, last_day = calendar.monthrange(2026, mes)
         p_od, p_do = date(2026, mes, 1), date(2026, mes, last_day)
         
         if parl:
             cp1, cp2 = st.columns(2)
-            p_od = cp1.date_input("Parlament od", p_od)
-            p_do = cp2.date_input("Parlament do", p_do)
+            # Parametr format='DD.MM.YYYY' nastavuje slovenský štandard
+            p_od = cp1.date_input("Parlament od", p_od, format="DD.MM.YYYY")
+            p_do = cp2.date_input("Parlament do", p_do, format="DD.MM.YYYY")
         
         st.subheader("Absencie (Dovolenka, Kurz, Voľno)")
         df_v_edit = st.data_editor(df_v_raw, use_container_width=True, key="v_ed", num_rows="dynamic")
