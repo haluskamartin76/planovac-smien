@@ -23,8 +23,8 @@ CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILENAME = os.path.join(BASE_DIR, 'databaza_pozicii.xlsx')
 
-# !!! SEM DOPLŇ SVOJU CESTU K REPOZITÁRU NA GITHUBE (napr. "pouzivatel/repozitar") !!!
-REPO_PATH = "TVOJE_MENO/TVOJ_REPOZITAR" 
+# CESTA K TVOJMU REPOZITÁRU (Už vyplnená)
+REPO_PATH = "haluskamartin76/planovac-smien" 
 
 # --- 2. POMOCNÉ FUNKCIE ---
 def parse_days(s):
@@ -64,27 +64,35 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
 
 def push_to_github(df_data, df_volno):
     if "GITHUB_TOKEN" not in st.secrets:
-        st.error("Chýba GITHUB_TOKEN v Secrets!")
+        st.error("Chýba GITHUB_TOKEN v Secrets! Nastavte ho v Streamlit Cloud.")
         return False
+    
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_data.to_excel(writer, sheet_name='Data', index=False)
         df_volno.to_excel(writer, sheet_name='Volno', index=False)
+    
     content = output.getvalue()
     token = st.secrets["GITHUB_TOKEN"]
     url = f"https://github.com{REPO_PATH}/contents/databaza_pozicii.xlsx"
-    headers = {"Authorization": f"token {token}"}
+    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+    
     try:
         res = requests.get(url, headers=headers)
         sha = res.json().get('sha') if res.status_code == 200 else None
-        payload = {"message": f"Aktualizácia dát {datetime.now()}", "content": base64.b64encode(content).decode(), "sha": sha}
+        
+        payload = {
+            "message": f"Aktualizácia absencií {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            "content": base64.b64encode(content).decode(),
+            "sha": sha
+        }
         r = requests.put(url, json=payload, headers=headers)
         return r.status_code in [200, 201]
     except Exception as e:
         st.error(f"GitHub Error: {e}")
         return False
 
-# --- 3. GENEROVANIE ---
+# --- 3. HLAVNÁ GENEROVACIA FUNKCIA ---
 def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_volno_edited, use_extra_w, df_db):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -94,7 +102,8 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
         z_fmts = {str(i): workbook.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc}) for i, c, fc in zip([1, 2, 3, 4], ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
         f_d, f_kz, f_v = workbook.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'}), workbook.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
         fmt_num, fmt_low = workbook.add_format({**fmt_sep, 'num_format': '#,##0.0'}), workbook.add_format({**fmt_sep, 'bg_color': '#FF9900', 'num_format': '#,##0.0'})
-        f_c1_d, f_c1_n = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True}), workbook.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
+        f_c1_d = workbook.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
+        f_c1_n = workbook.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
 
         _, days_count = calendar.monthrange(r, m)
         vysledky, hod_fond_sofar = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}, {idx: 0.0 for idx in df_db.index}
@@ -113,6 +122,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
         for d in range(1, days_count + 1):
             curr_d = date(r, m, d)
             is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
+            
             if is_workday:
                 nas_z8 = False
                 for col_f in ["Priorita_Z8", "Z8"]:
@@ -237,7 +247,7 @@ if os.path.exists(DB_FILENAME):
             if push_to_github(df_db_edit, df_v_raw): st.success("Uložené!")
     with t1:
         c1, c2, c3, c4 = st.columns(4)
-        mes, fon = c1.selectbox("Mesiac", range(1, 13), index=2), c2.number_input("Fond", value=155.0)
+        mes, fon = c1.selectbox("Mesiac", range(1, 13), index=datetime.now().month-1), c2.number_input("Fond", value=155.0)
         df_v_edit = st.data_editor(df_v_raw, use_container_width=True, key="v_ed")
         if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"):
             if push_to_github(df_db_edit, df_v_edit): st.success("Absencie uložené!")
