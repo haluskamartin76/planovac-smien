@@ -66,14 +66,15 @@ def get_prioritized_people(df_db, curr_d, smena_target, hod_fond_sofar, fond_lim
     return [x for x in sorted(pool, key=lambda x: x)]
 
 def load_from_github():
-    token = st.secrets["GITHUB_TOKEN"]
-    # Pridávame náhodné číslo (timestamp), aby sme obišli cache
-    url = f"https://github.com{REPO_USER}/{REPO_NAME}/contents/{FILE_PATH}?t={int(time.time())}"
-    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3.raw"}
-    res = requests.get(url, headers=headers)
-    if res.status_code == 200:
-        return io.BytesIO(res.content)
-    return None
+    try:
+        # Používame raw URL pre priame stiahnutie súboru
+        url = f"https://githubusercontent.com{REPO_USER}/{REPO_NAME}/main/{FILE_PATH}?t={int(time.time())}"
+        res = requests.get(url)
+        if res.status_code == 200:
+            return io.BytesIO(res.content)
+        return None
+    except:
+        return None
 
 def push_to_github(df_data, df_volno):
     if "GITHUB_TOKEN" not in st.secrets:
@@ -97,7 +98,7 @@ def push_to_github(df_data, df_volno):
         }
         r = requests.put(url, json=payload, headers=headers)
         if r.status_code in [200, 201]:
-            st.success("✅ Úspešne uložené na GitHub! (Zmeny sa prejavia o pár sekúnd)")
+            st.success("✅ Úspešne uložené! Počkajte pár sekúnd pred generovaním.")
             return True
         return False
     except: return False
@@ -141,7 +142,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
                 if nas_z8: break
                 for idx in get_prioritized_people(df_db, curr_d, 'D', hod_fond_sofar, fond_limit, True):
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    priez = str(df_db.loc[idx, 'Priezvisko'])
+                    priez = df_db.loc[idx, 'Priezvisko']
                     if isinstance(priez, pd.Series): priez = priez.iloc[0]
                     ab = abs_map.get(str(priez).strip(), {'d':set(), 'kz':set(), 'v':set()})
                     if d not in (ab['d']|ab['kz']|ab['v']) and str(df_db.loc[idx].get(col_f,'Nie')).lower()=='áno':
@@ -249,11 +250,26 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
                 ws.write(row_ptr, d, ps, f_c1_d if ps=='C' else workbook.add_format({**fmt_b, 'bg_color': bg, 'bold': bool(ps) and cyk_char != 'D'}))
                 ws.write(row_ptr+1, d, ns, f_c1_n if ns=='C' else workbook.add_format({**fmt_sep, 'bg_color': bg, 'bold': bool(ns) and cyk_char != 'N'}))
         
+        # FULL FORMULA (Obnovená tvoja pôvodná logika z Colabu)
         r_ex, zz_col = row_ptr+1, xlsxwriter.utility.xl_col_to_name(ZZ)
-        f_formula = f"=(COUNTIF({xlsxwriter.utility.xl_col_to_name(1)}{r_ex}:{xlsxwriter.utility.xl_col_to_name(days_count)}{r_ex+1},\"*\")*11.5)-...+(...)" # Zjednodušené pre ukážku, tvoja logika ostáva
-        ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, " ", fmt_num) # Tu doplň tvoj full_formula
-        ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-0", fmt_num)
+        cyk_f = f"CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\")"
+        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID({cyk_f},{(date(r,m,d)-START_REF).days%8+1},1)=\"D\",MID({cyk_f},{(date(r,m,d)-START_REF).days%8+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
+        sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
+        full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
+        
+        ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
+        sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
+        ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
+        ws.conditional_format(row_ptr, days_count+2, row_ptr+1, days_count+2, {'type': 'cell', 'criteria': '>', 'value': 0, 'format': fmt_low})
 
+    ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], workbook.add_format({'bold':True, 'border':1}))
+    m_row = 1
+    for d in range(1, days_count+1):
+        for smena in ['D', 'N']:
+            curr_obs = vysledky[d][smena].values()
+            prio_check = PRIO_LIST + (['Z8'] if smena == 'D' and date(r,m,d).weekday()<5 and date(r,m,d) not in SVIATKY_2026 else [])
+            for p in prio_check:
+                if p not in curr_obs: ws_miss.write_row(m_row, 0, [d, smena, p]); m_row += 1
     workbook.close()
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
@@ -261,9 +277,7 @@ def generuj_final_streamlit(m, r, fond_limit, parl_active, p_from, p_to, df_voln
 st.set_page_config(page_title="Smart Plánovač 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
-# NAČÍTANIE PRIAMO Z GITHUB (Vždy čerstvé)
 db_file = load_from_github()
-
 if db_file:
     ex = pd.ExcelFile(db_file, engine='openpyxl')
     df_db_raw = ex.parse('Data').dropna(subset=['Priezvisko'])
@@ -294,4 +308,4 @@ if db_file:
             xlsx, name = generuj_final_streamlit(mes, 2026, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db_edit)
             st.download_button("📥 STIAHNUŤ EXCEL", data=xlsx, file_name=name, use_container_width=True)
 else:
-    st.error("Nepodarilo sa načítať databázu z GitHubu. Skontroluj GITHUB_TOKEN.")
+    st.error("Chyba pripojenia k databáze na GitHube. Skontrolujte GITHUB_TOKEN.")
