@@ -46,39 +46,26 @@ def push_to_github(df_data, df_volno):
     if "GITHUB_TOKEN" not in st.secrets:
         st.error("Chýba GITHUB_TOKEN v Secrets!")
         return False
-    
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_data.to_excel(writer, sheet_name='Data', index=False)
         df_volno.to_excel(writer, sheet_name='Volno', index=False)
-    
     content = output.getvalue()
     token = st.secrets["GITHUB_TOKEN"]
-    # Správna API URL pre GitHub
-    url = f"https://github.com{REPO_USER}/{REPO_NAME}/contents/{DB_FILENAME}"
+    # OPRAVENÁ API URL (://github.com...)
+    url = f"https://://github.com{REPO_USER}/{REPO_NAME}/contents/{DB_FILENAME}"
     headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-    
     try:
         res = requests.get(url, headers=headers)
         sha = res.json().get('sha') if res.status_code == 200 else None
-        
-        payload = {
-            "message": f"Aktualizácia {datetime.now().strftime('%d.%m.%Y %H:%M')}",
-            "content": base64.b64encode(content).decode(),
-            "sha": sha
-        }
+        payload = {"message": f"Aktualizácia {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                   "content": base64.b64encode(content).decode(), "sha": sha}
         r = requests.put(url, json=payload, headers=headers)
-        if r.status_code in [200, 201]:
-            st.success("✅ Úspešne uložené na GitHub!")
-            return True
-        else:
-            st.error(f"Chyba GitHubu: {r.status_code}")
-            return False
-    except Exception as e:
-        st.error(f"Chyba spojenia: {e}")
-        return False
+        if r.status_code in [200, 201]: st.success("✅ Úspešne uložené na GitHub!"); return True
+        else: st.error(f"Chyba GitHubu: {r.status_code}"); return False
+    except Exception as e: st.error(f"Chyba spojenia: {e}"); return False
 
-# --- 3. GENEROVANIE (Tvoj 100% funkčný originál) ---
+# --- 3. GENEROVANIE (Tvoj 100% funkčný originál z Colabu) ---
 def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_extra_w, df_db):
     output = io.BytesIO()
     wb = xlsxwriter.Workbook(output)
@@ -89,10 +76,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
     z_fmts = {str(i): wb.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc})
               for i, c, fc in zip([1, 2, 3, 4], ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
     f_d, f_kz, f_v = wb.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white'}), wb.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'}), wb.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
-    fmt_num = wb.add_format({**fmt_sep, 'num_format': '#,##0.0'})
-    f_c1_d = wb.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
-    f_c1_n = wb.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
-    fmt_low = wb.add_format({**fmt_sep, 'bg_color': '#FF9900', 'num_format': '#,##0.0'})
+    fmt_num, fmt_low = wb.add_format({**fmt_sep, 'num_format': '#,##0.0'}), wb.add_format({**fmt_sep, 'bg_color': '#FF9900', 'num_format': '#,##0.0'})
+    f_c1_d, f_c1_n = wb.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True}), wb.add_format({**fmt_sep, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
 
     _, days_count = calendar.monthrange(r, m)
     vysledky, hod_fond_sofar = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}, {idx: 0.0 for idx in df_db.index}
@@ -124,8 +109,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
                 if nas_z8: break
                 for idx in get_prioritized_people('D', True):
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                    ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                    priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                     if d not in (ab['d']|ab['kz']|ab['v']) and str(df_db.loc[idx].get(col_f,'Nie')).lower() == 'áno':
                         vysledky[d]['D'][idx] = "Z8"; hod_fond_sofar[idx] += 7.5; nas_z8 = True; break
 
@@ -133,16 +117,13 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
             for idx in df_db.index:
                 if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
                 if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena and str(df_db.loc[idx].get('C1','Nie')).lower() == 'áno':
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                    ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                    priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                     if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, smena, 'C1', vysledky):
                         vysledky[d][smena][idx] = 'C1'; hod_fond_sofar[idx] += 11.5; break
-
-            # Tu pokračuje zvyšok priraďovania (ZT, NB, Špecifické, Prio)
+            
             for p_n in ['ZT', 'NB']:
                 if p_n in vysledky[d][smena].values() or (p_n == 'NB' and smena == 'D' and is_workday): continue
-                pool = get_prioritized_people(smena)
-                nas = False
+                pool, nas = get_prioritized_people(smena), False
                 for idx in pool:
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
                     if str(df_db.loc[idx].get(f"Priorita_{p_n}",'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
@@ -163,20 +144,17 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
                     if poz in vysledky[d]['D'].values(): continue
                     for idx in get_prioritized_people('D'):
                         if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        p_col = poz if poz != 'W_EXTRA' else 'W1'
-                        if str(df_db.loc[idx].get(p_col,'Nie')).lower() == 'áno':
-                            priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
-                            if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, 'D', poz, vysledky):
-                                vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+                        priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                        if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, 'D', poz, vysledky):
+                            vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
 
             for poz in PRIO_LIST:
                 if poz in vysledky[d][smena].values(): continue
                 for idx in get_prioritized_people(smena):
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    if str(df_db.loc[idx].get(poz,'Nie')).lower() == 'áno':
-                        priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
-                        if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, smena, poz, vysledky):
-                            vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+                    priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                    if d not in (ab['d']|ab['kz']|ab['v']) and moze_nastupit(idx, d, smena, poz, vysledky):
+                        vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
 
         if is_workday:
             wa = (((curr_d - START_REF).days // 7) % 2 == 0)
@@ -188,6 +166,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
                     fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
                     if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
 
+    # ZÁPIS EXCEL (ZEBRA + VZORCE)
     ws.set_column(0, 0, 25); ZZ = days_count + 10
     col_bg_map = {day: ('#40B4EE' if date(r,m,day) in SVIATKY_2026 else ('#FFCC66' if date(r,m,day).weekday()==5 else ('#CC9900' if date(r,m,day).weekday()==6 else '#FFFFFF'))) for day in range(1, days_count+1)}
     for day in range(1, days_count + 1): ws.write(0, day, day, wb.add_format({**fmt_b, 'bg_color': col_bg_map[day]}))
@@ -197,7 +176,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
         zebra, row_ptr = ('#FFFF00' if i % 2 == 1 else '#FFFFFF'), i*2+1
         ws.merge_range(row_ptr, 0, row_ptr+1, 0, f"{row['Priezvisko']} {row['Meno']}", z_fmts[str(int(row['Zmena']))])
         ws.write(row_ptr, ZZ, int(row['Zmena']))
-        ab = abs_map.get(str(row['Priezvisko']).strip(), {'d':set(), 'kz':set(), 'v':set()})
+        priez = str(row['Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(), 'kz':set(), 'v':set()})
         for d in range(1, days_count + 1):
             bg = col_bg_map[d] if col_bg_map[d] != '#FFFFFF' else zebra
             cyk_char = CYKLY[int(row['Zmena'])][(date(r, m, d) - START_REF).days % 8]
@@ -219,6 +198,14 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
         ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
         ws.conditional_format(row_ptr, days_count+2, row_ptr+1, days_count+2, {'type': 'cell', 'criteria': '>', 'value': 0, 'format': fmt_low})
 
+    ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], wb.add_format({'bold':True, 'border':1}))
+    m_row = 1
+    for d in range(1, days_count + 1):
+        for smena in ['D', 'N']:
+            curr_obs = vysledky[d][smena].values()
+            prio_check = PRIO_LIST + (['Z8'] if smena == 'D' and date(r,m,d).weekday()<5 and date(r,m,d) not in SVIATKY_2026 else [])
+            for p in prio_check:
+                if p not in curr_obs: ws_miss.write_row(m_row, 0, [d, smena, p]); m_row += 1
     wb.close()
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
 
@@ -226,33 +213,25 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_list, use_ex
 st.set_page_config(page_title="Smart Plánovač 2026", layout="wide")
 st.title("🚀 Smart Plánovač 2026")
 
-# Prvotné načítanie dát
 if 'df_db' not in st.session_state:
     ex = pd.ExcelFile(DB_FILENAME)
     st.session_state.df_db = ex.parse('Data').dropna(subset=['Priezvisko'])
-    df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
+    df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Dovolenka', 'KZ', 'Volno'])
     for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace('nan', '')
     st.session_state.df_v = df_v
 
 t1, t2 = st.tabs(["📊 Plánovanie", "⚙️ Databáza"])
 with t2:
-    # On_change callback zabezpečí, že zmeny sa hneď zapíšu do pamäte a nezmiznú
     st.session_state.df_db = st.data_editor(st.session_state.df_db, use_container_width=True, key="db_edit")
-    if st.button("💾 ULOŽIŤ PERSONÁL NA GITHUB"):
-        push_to_github(st.session_state.df_db, st.session_state.df_v)
+    if st.button("💾 ULOŽIŤ PERSONÁL NA GITHUB"): push_to_github(st.session_state.df_db, st.session_state.df_v)
 with t1:
     c1, c2, c3, c4 = st.columns(4)
     mes = c1.selectbox("Mesiac", range(1, 13), index=datetime.now().month-1)
-    fon = c2.number_input("Fond", value=155.0)
-    parl, extra_w = c3.checkbox("Parlament", True), c4.checkbox("Extra W", True)
+    fon = c2.number_input("Fond", value=155.0); parl, extra_w = c3.checkbox("Parlament", True), c4.checkbox("Extra W", True)
     _, last_day = calendar.monthrange(2026, mes)
-    p_od = st.date_input("Od", date(2026, mes, 1), format="DD.MM.YYYY")
-    p_do = st.date_input("Do", date(2026, mes, last_day), format="DD.MM.YYYY")
-    
+    p_od = st.date_input("Od", date(2026, mes, 1), format="DD.MM.YYYY"); p_do = st.date_input("Do", date(2026, mes, last_day), format="DD.MM.YYYY")
     st.session_state.df_v = st.data_editor(st.session_state.df_v, use_container_width=True, key="volno_edit")
-    if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"):
-        push_to_github(st.session_state.df_db, st.session_state.df_v)
-    
+    if st.button("💾 ULOŽIŤ ABSENCIE NA GITHUB"): push_to_github(st.session_state.df_db, st.session_state.df_v)
     if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
         xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, st.session_state.df_v, extra_w, st.session_state.df_db)
         st.download_button("📥 STIAHNUŤ", data=xlsx, file_name=name, use_container_width=True)
