@@ -89,7 +89,6 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     vysledky = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}
     hod_fond_sofar = {idx: 0.0 for idx in df_db.index}
 
-    # Zoznam pre ukladanie neobsadených pozícií zachytených priamo počas plánovania
     neobsadene_zaznamy = []
 
     abs_map = {}
@@ -118,7 +117,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
                 fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
                 pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-            return [x[0] for x in sorted(pool, key=lambda x: x[1])]
+            return [x for x in sorted(pool, key=lambda x: x)]
 
         if is_workday:
             nas_z8 = False
@@ -133,7 +132,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                         if d not in cv:
                             vysledky[d]['D'][idx] = "Z8"; hod_fond_sofar[idx] += 7.5; nas_z8 = True; break
                         else:
-                            neobsadene_zaznamy.append((d, 'D', col_f))
+                            # Prepisujeme "Priorita_Z8" na reálny názov pozície "Z8"
+                            neobsadene_zaznamy.append((d, 'D', 'Z8'))
 
         for smena in ['D', 'N']:
             for idx in df_db.index:
@@ -159,7 +159,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                         if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
                             vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
                         elif d in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
-                            neobsadene_zaznamy.append((d, smena, f"Priorita_{p_n}"))
+                            # Prepisujeme "Priorita_ZT/NB" na reálny finálny názov pozície "ZT/NB"
+                            neobsadene_zaznamy.append((d, smena, p_n))
                 if not nas:
                     for idx in pool:
                         if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
@@ -205,12 +206,12 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
                 priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                 cv = ab['d'] | ab['kz'] | ab['v']
-                fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
-                if fx:
-                    if d not in cv:
-                        vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
-                    else:
-                        # Ak mal nastúpiť na trg (IR/IP) alebo na X a má voľno, zapíšeme to ako neobsadené
+                if d not in cv:
+                    fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
+                    if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
+                else:
+                    fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
+                    if fx:
                         neobsadene_zaznamy.append((d, 'D', fx))
 
     ws.set_column(0, 0, 25)
@@ -246,7 +247,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
         r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
-        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
+        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
         full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
@@ -256,14 +257,15 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     # --- ZÁPIS NEOBSADENÝCH POZÍCIÍ NA SAMOSTATNÝ HÁROK ---
     ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], wb.add_format({'bold':True, 'border':1}))
     
-    # Odstránenie duplicít z chýbajúcich záznamov a zoradenie podľa dní
     unikatne_neobsadene = sorted(list(set(neobsadene_zaznamy)), key=lambda x: x[0])
     
-    for m_row, (den_m, smena_m, poz_m) in enumerate(unikatne_neobsadene, start=1):
-        # Ak sa nakoniec podarilo v daný deň nájsť niekoho iného, kto pozíciu obsadil, nehlásime ju ako dieru
+    skutocny_row = 1
+    for den_m, smena_m, poz_m in unikatne_neobsadene:
         aktualne_obsadene = [short_label(x) for x in vysledky[den_m][smena_m].values()]
+        # Pre overenie očisťujeme aj hľadanú pozíciu cez short_label mapu
         if short_label(poz_m) not in aktualne_obsadene:
-            ws_miss.write_row(m_row, 0, [den_m, smena_m, poz_m])
+            ws_miss.write_row(skutocny_row, 0, [den_m, smena_m, poz_m])
+            skutocny_row += 1
     
     wb.close()
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
