@@ -218,7 +218,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
 # --- UI STREAMLIT ---
 st.set_page_config(page_title="Plánovač 2026", layout="wide")
-st.title("🚀 Plánovač Smien 2026")
+st.title("🚀 Plánovač Zmien 2026")
 
 uploaded_file = st.file_uploader("Nahraj databaza_pozicii.xlsx", type="xlsx")
 
