@@ -163,7 +163,6 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                                 vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
 
             if smena == 'D' and is_workday:
-                # Blokovanie parlamentných pozícií na pondelok, sobotu a nedeľu (weekday 0, 5, 6)
                 specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() not in [0, 5, 6] else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
                 for poz in specs:
                     if poz in vysledky[d]['D'].values(): continue
@@ -189,7 +188,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
             trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
             for idx in get_prioritized_people('D', True):
                 if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v::set()})
+                priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                 cv = ab['d'] | ab['kz'] | ab['v']
                 if d not in cv:
                     fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
@@ -263,10 +262,11 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
             # Overenie voči skutočnosti na hárku
             for p in prio_skratky:
-                # Mapovanie skratiek na pekné texty pre výpis
                 hladana_znacka = 'W' if p == 'W_EXTRA' else p
                 if hladana_znacka not in realne_na_harku:
-                    ws_miss.write_row(m_row, 0, [d, smena, p])
+                    krasny_nazov = p
+                    if p == 'W' and use_extra_w and 'W' not in realne_na_harku: krasny_nazov = 'W_EXTRA'
+                    ws_miss.write_row(m_row, 0, [d, smena, krasny_nazov])
                     m_row += 1
 
             # 2. KONTROLA KANCELÁRIÍ IR / IP / X (IZOLOVANÝ POČTOVÝ SYSTÉM)
@@ -286,14 +286,12 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 
                 if realny_pocet < ocakavany_pocet:
                     kolko_chyba = ocakavany_pocet - realny_pocet
-                    # Chýbajúce miesta zapíšeme pod správnym názvom rotujúcej pozície (alebo záložnej X)
                     priezviska_v_dile = []
                     for idx in df_db.index:
                         if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == 'D':
                             if str(df_db.loc[idx].get(kanc_trg, 'Nie')).lower() == 'áno': priezviska_v_dile.append(kanc_trg)
                             elif str(df_db.loc[idx].get('X', 'Nie')).lower() == 'áno': priezviska_v_dile.append('X')
                     
-                    # Logicky doplníme do zoznamu to, čo fyzicky chýba
                     for p_typ in priezviska_v_dile:
                         if kolko_chyba <= 0: break
                         aktualna_skratka = short_label(p_typ)
