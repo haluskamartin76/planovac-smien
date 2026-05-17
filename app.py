@@ -88,7 +88,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     f_kz = wb.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'})
     f_v = wb.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
     
-    # OPRAVENÉ: Správna definícia vzorov (šrafovania) pre xlsxwriter pomocou kľúčov pattern, bg_color a fg_color
+    # Formáty so šrafovaním pre prípad, že absencia padne na plánovanú zmenu zamestnanca
     f_d_vzor = wb.add_format({**fmt_sep, 'font_color': 'white', 'pattern': 4, 'bg_color': '#226622', 'fg_color': '#339933'})
     f_kz_vzor = wb.add_format({**fmt_sep, 'font_color': 'white', 'pattern': 4, 'bg_color': '#003399', 'fg_color': '#0066FF'})
     f_v_vzor = wb.add_format({**fmt_sep, 'font_color': 'black', 'pattern': 4, 'bg_color': '#00BB99', 'fg_color': '#00FFCC'})
@@ -154,13 +154,13 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 penalty = 10000 if hod_fond_sofar[p['id']] >= fond_limit else 0
                 fond_score = -hod_fond_sofar[p['id']] if is_75_poz else hod_fond_sofar[p['id']]
                 pool.append((p, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-            return [x[0] for x in sorted(pool, key=lambda x: x[1])]
+            return [x for x in sorted(pool, key=lambda x: x)]
 
         if is_workday:
             nas_z8 = False
             for col_f in ["Priorita_Z8", "Z8"]:
                 if nas_z8: break
-                for p in get_prioritized_people('D', True):
+                for p, _ in get_prioritized_people('D', True):
                     if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
                     ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
@@ -171,7 +171,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                             neobsadene_zaznamy.append((d, 'D', 'Z8'))
 
         for smena in ['D', 'N']:
-            for p in ludia:
+            for p, _ in get_prioritized_people(smena):
                 if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
                 if CYKLY[p['Zmena']][(curr_d - START_REF).days % 8] == smena and p['C1'] == 'áno':
                     ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
@@ -185,7 +185,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 if p_n in vysledky[d][smena].values() or (p_n == 'NB' and smena == 'D' and is_workday): continue
                 nas = False
                 pool = get_prioritized_people(smena)
-                for p in pool:
+                for p, _ in pool:
                     if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
                     if p[f"Priorita_{p_n}"] == 'áno' and CYKLY[p['Zmena']][(curr_d - START_REF).days % 8] == smena:
                         ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
@@ -195,7 +195,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                         elif d in cv and moze_nastupit(p['id'], d, smena, p_n, vysledky):
                             neobsadene_zaznamy.append((d, smena, p_n))
                 if not nas:
-                    for p in pool:
+                    for p, _ in pool:
                         if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
                         if p[p_n] == 'áno' and CYKLY[p['Zmena']][(curr_d - START_REF).days % 8] == smena:
                             ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
@@ -209,7 +209,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() not in [0, 5, 6] else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
                 for poz in specs:
                     if poz in vysledky[d]['D'].values(): continue
-                    for p in get_prioritized_people('D'):
+                    for p, _ in get_prioritized_people('D'):
                         if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
                         ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                         cv = ab['d'] | ab['kz'] | ab['v']
@@ -222,7 +222,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
             for poz in PRIO_LIST:
                 if poz in vysledky[d][smena].values(): continue
-                for p in get_prioritized_people(smena):
+                for p, _ in get_prioritized_people(smena):
                     if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
                     ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
@@ -235,7 +235,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         if is_workday:
             wa = (((curr_d - START_REF).days // 7) % 2 == 0)
             trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
-            for p in get_prioritized_people('D', True):
+            for p, _ in get_prioritized_people('D', True):
                 if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
                 ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                 cv = ab['d'] | ab['kz'] | ab['v']
@@ -275,7 +275,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 ws.merge_range(row_ptr, d, row_ptr+1, d, 'D', fmt)
             elif d in ab['kz']:
                 fmt = f_kz_vzor if ma_mat_smenu else f_kz
-                ws.merge_range(row_ptr, d, row_ptr+1, d, 'KZ', fmt)
+                ws.merge_range(row_ptr, d, row_ptr+1, d, 'KZ', f_kz_vzor if ma_mat_smenu else f_kz)
             elif d in ab['v']:
                 fmt = f_v_vzor if ma_mat_smenu else f_v
                 ws.merge_range(row_ptr, d, row_ptr+1, d, 'V', fmt)
@@ -287,7 +287,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
         r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
-        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
+        # STOPERCENTNE OVERENÝ VZOREC S DEFINOVANÝMI ODKAZMI NA CYKLY (1, 2, 3, 4) PRE CHOOSE
+        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
         full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
