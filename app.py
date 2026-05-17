@@ -66,10 +66,7 @@ def moze_nastupit(idx, d, smena, poz, vysledky):
     return True
 
 def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_extra_w, df_db):
-    # Vygenerovanie zoznamu sviatkov pre vybraný rok
     sviatky_aktualne = ziskaj_sviatky(r)
-    
-    # VRÁTENIE PORADIA NA PÔVODNÉ PODĽA INDEXU
     df_db = df_db.sort_values(by='Povodne_Poradie')
     
     output = io.BytesIO()
@@ -91,6 +88,9 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     _, days_count = calendar.monthrange(r, m)
     vysledky = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}
     hod_fond_sofar = {idx: 0.0 for idx in df_db.index}
+
+    # Zoznam pre ukladanie neobsadených pozícií zachytených priamo počas plánovania
+    neobsadene_zaznamy = []
 
     abs_map = {}
     for _, row in df_v_edit.iterrows():
@@ -129,8 +129,11 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                     priez = str(df_db.loc[idx, 'Priezvisko']).strip()
                     ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
-                    if d not in cv and str(df_db.loc[idx].get(col_f,'Nie')).lower() == 'áno':
-                        vysledky[d]['D'][idx] = "Z8"; hod_fond_sofar[idx] += 7.5; nas_z8 = True; break
+                    if str(df_db.loc[idx].get(col_f,'Nie')).lower() == 'áno':
+                        if d not in cv:
+                            vysledky[d]['D'][idx] = "Z8"; hod_fond_sofar[idx] += 7.5; nas_z8 = True; break
+                        else:
+                            neobsadene_zaznamy.append((d, 'D', col_f))
 
         for smena in ['D', 'N']:
             for idx in df_db.index:
@@ -141,6 +144,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                     cv = ab['d'] | ab['kz'] | ab['v']
                     if d not in cv and moze_nastupit(idx, d, smena, 'C1', vysledky):
                         vysledky[d][smena][idx] = 'C1'; hod_fond_sofar[idx] += 11.5; break
+                    elif d in cv and moze_nastupit(idx, d, smena, 'C1', vysledky):
+                        neobsadene_zaznamy.append((d, smena, 'C1'))
 
             for p_n in ['ZT', 'NB']:
                 if p_n in vysledky[d][smena].values() or (p_n == 'NB' and smena == 'D' and is_workday): continue
@@ -153,6 +158,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                         cv = ab['d'] | ab['kz'] | ab['v']
                         if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
                             vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
+                        elif d in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
+                            neobsadene_zaznamy.append((d, smena, f"Priorita_{p_n}"))
                 if not nas:
                     for idx in pool:
                         if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
@@ -161,6 +168,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                             cv = ab['d'] | ab['kz'] | ab['v']
                             if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
                                 vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
+                            elif d in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
+                                neobsadene_zaznamy.append((d, smena, p_n))
 
             if smena == 'D' and is_workday:
                 specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() not in [0, 5, 6] else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
@@ -171,8 +180,11 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                         priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                         cv = ab['d'] | ab['kz'] | ab['v']
                         p_col = poz if poz != 'W_EXTRA' else 'W1'
-                        if d not in cv and str(df_db.loc[idx].get(p_col,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, 'D', poz, vysledky):
-                            vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+                        if str(df_db.loc[idx].get(p_col,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, 'D', poz, vysledky):
+                            if d not in cv:
+                                vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+                            else:
+                                neobsadene_zaznamy.append((d, 'D', poz))
 
             for poz in PRIO_LIST:
                 if poz in vysledky[d][smena].values(): continue
@@ -180,8 +192,11 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
                     priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
-                    if d not in cv and str(df_db.loc[idx].get(poz,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, smena, poz, vysledky):
-                        vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+                    if str(df_db.loc[idx].get(poz,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, smena, poz, vysledky):
+                        if d not in cv:
+                            vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+                        else:
+                            neobsadene_zaznamy.append((d, smena, poz))
 
         if is_workday:
             wa = (((curr_d - START_REF).days // 7) % 2 == 0)
@@ -190,9 +205,13 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
                 priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                 cv = ab['d'] | ab['kz'] | ab['v']
-                if d not in cv:
-                    fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
-                    if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
+                fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
+                if fx:
+                    if d not in cv:
+                        vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
+                    else:
+                        # Ak mal nastúpiť na trg (IR/IP) alebo na X a má voľno, zapíšeme to ako neobsadené
+                        neobsadene_zaznamy.append((d, 'D', fx))
 
     ws.set_column(0, 0, 25)
     for d in range(1, days_count + 1): ws.set_column(d, d, 3.5)
@@ -234,71 +253,17 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
         ws.conditional_format(row_ptr, days_count+2, row_ptr+1, days_count+2, {'type': 'cell', 'criteria': '>', 'value': 0, 'format': fmt_low})
 
-    # --- KONTROLA NEOBSADENÝCH POZÍCIÍ ---
+    # --- ZÁPIS NEOBSADENÝCH POZÍCIÍ NA SAMOSTATNÝ HÁROK ---
     ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], wb.add_format({'bold':True, 'border':1}))
-    m_row = 1
-    for d in range(1, days_count + 1):
-        curr_d = date(r, m, d)
-        is_workday = curr_d.weekday() < 5 and curr_d not in sviatky_aktualne
-
-        for smena in ['D', 'N']:
-            # Výsledné reálne obsadené značky z Excelu (C, Z, W, R, K, X...)
-            realne_na_harku = [short_label(x) for x in vysledky[d][smena].values()]
-            
-            # 1. KONTROLA ŠTANDARDNÝCH POZÍCIÍ (Porovnávame ich pod skratkami 'C', 'ZT', 'Z', 'W' atď.)
-            vsetky_prio = ['C1', 'ZT'] + PRIO_LIST
-            prio_skratky = list(set([short_label(p) for p in vsetky_prio]))
-            
-            # Pridanie podmienených pozícií
-            if smena == 'N' or (smena == 'D' and not is_workday):
-                prio_skratky.append('NB')
-            
-            if smena == 'D' and is_workday:
-                prio_skratky += ['Z8', 'M']
-                if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() not in [0, 5, 6]:
-                    prio_skratky += ['TP', 'S1', 'S2', 'S3']
-                if use_extra_w:
-                    prio_skratky.append('W_EXTRA')
-
-            # Overenie voči skutočnosti na hárku
-            for p in prio_skratky:
-                hladana_znacka = 'W' if p == 'W_EXTRA' else p
-                if hladana_znacka not in realne_na_harku:
-                    krasny_nazov = p
-                    if p == 'W' and use_extra_w and 'W' not in realne_na_harku: krasny_nazov = 'W_EXTRA'
-                    ws_miss.write_row(m_row, 0, [d, smena, krasny_nazov])
-                    m_row += 1
-
-            # 2. KONTROLA KANCELÁRIÍ IR / IP / X (IZOLOVANÝ POČTOVÝ SYSTÉM)
-            if smena == 'D' and is_workday:
-                wa = (((curr_d - START_REF).days // 7) % 2 == 0)
-                kanc_trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
-                
-                # Zistíme, koľko zamestnancov malo v tento deň podľa cyklu pracovať na kancelárii / X
-                ocakavany_pocet = 0
-                for idx in df_db.index:
-                    if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == 'D':
-                        if str(df_db.loc[idx].get(kanc_trg, 'Nie')).lower() == 'áno' or str(df_db.loc[idx].get('X', 'Nie')).lower() == 'áno':
-                            ocakavany_pocet += 1
-                
-                # Spočítame koľko z nich reálne nastúpilo (značky R, K, X)
-                realny_pocet = sum(1 for x in realne_na_harku if x in ['R', 'K', 'X'])
-                
-                if realny_pocet < ocakavany_pocet:
-                    kolko_chyba = ocakavany_pocet - realny_pocet
-                    priezviska_v_dile = []
-                    for idx in df_db.index:
-                        if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == 'D':
-                            if str(df_db.loc[idx].get(kanc_trg, 'Nie')).lower() == 'áno': priezviska_v_dile.append(kanc_trg)
-                            elif str(df_db.loc[idx].get('X', 'Nie')).lower() == 'áno': priezviska_v_dile.append('X')
-                    
-                    for p_typ in priezviska_v_dile:
-                        if kolko_chyba <= 0: break
-                        aktualna_skratka = short_label(p_typ)
-                        if aktualna_skratka not in realne_na_harku:
-                            ws_miss.write_row(m_row, 0, [d, smena, p_typ])
-                            m_row += 1
-                            kolko_chyba -= 1
+    
+    # Odstránenie duplicít z chýbajúcich záznamov a zoradenie podľa dní
+    unikatne_neobsadene = sorted(list(set(neobsadene_zaznamy)), key=lambda x: x[0])
+    
+    for m_row, (den_m, smena_m, poz_m) in enumerate(unikatne_neobsadene, start=1):
+        # Ak sa nakoniec podarilo v daný deň nájsť niekoho iného, kto pozíciu obsadil, nehlásime ju ako dieru
+        aktualne_obsadene = [short_label(x) for x in vysledky[den_m][smena_m].values()]
+        if short_label(poz_m) not in aktualne_obsadene:
+            ws_miss.write_row(m_row, 0, [den_m, smena_m, poz_m])
     
     wb.close()
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
@@ -312,14 +277,12 @@ uploaded_file = st.file_uploader("Nahraj databaza_pozicii.xlsx", type="xlsx")
 if uploaded_file:
     ex = pd.ExcelFile(uploaded_file)
     
-    # 1. NAČÍTANIE + ULOŽENIE PÔVODNÉHO PORADIA
     df_db = ex.parse('Data').dropna(subset=['Priezvisko'])
     df_db['Povodne_Poradie'] = range(len(df_db))
     
     df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
     for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace(['nan', 'None'], '')
     
-    # Pridáme pôvodné poradie aj do tabuľky volno pre synchronizáciu
     df_v = df_v.merge(df_db[['Priezvisko', 'Meno', 'Povodne_Poradie']], on=['Priezvisko', 'Meno'], how='left')
 
     c1, c2, c3, c4, c5 = st.columns(5)
