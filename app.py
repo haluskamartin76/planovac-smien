@@ -163,7 +163,6 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                                 vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
 
             if smena == 'D' and is_workday:
-                # UPRAVENÉ: Parlamentné pozície sa plánujú len v UTOROK (1), STREDU (2), ŠTVRTOK (3) a PIATOK (4) -> vylúčená sobota, nedeľa, pondelok
                 specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4] else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
                 for poz in specs:
                     if poz in vysledky[d]['D'].values(): continue
@@ -238,11 +237,37 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], wb.add_format({'bold':True, 'border':1}))
     m_row = 1
     for d in range(1, days_count + 1):
+        curr_d = date(r, m, d)
+        is_workday = curr_d.weekday() < 5 and curr_d not in sviatky_aktualne
+
         for smena in ['D', 'N']:
             curr_obs = vysledky[d][smena].values()
-            prio_check = PRIO_LIST + (['Z8'] if smena == 'D' and date(r,m,d).weekday()<5 and date(r,m,d) not in sviatky_aktualne else [])
+            
+            # SPÁJANIE A KONTROLA KOMPLETNE VŠETKÝCH POZÍCIÍ PODĽA SMENY A PODMIENOK V KÓDE
+            prio_check = ['C1', 'ZT', 'NB'] + PRIO_LIST
+            
+            # Pozície, ktoré sa plánujú výhradne cez deň (D) a za určitých podmienok
+            if smena == 'D':
+                if is_workday:
+                    prio_check += ['Z8', 'M']
+                    if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4]:
+                        prio_check += ['TP', 'S1', 'S2', 'S3']
+                    if use_extra_w:
+                        prio_check += ['W_EXTRA']
+                    
+                    # 7.5-hodinové kancelárske pozície (IR / IP alebo alternatívne X)
+                    wa = (((curr_d - START_REF).days // 7) % 2 == 0)
+                    kanc_trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
+                    prio_check += [kanc_trg, 'X']
+
+            # Kontrola a zápis každej neobsadenej pozície, ktorá reálne chýba
             for p in prio_check:
-                if p not in curr_obs: ws_miss.write_row(m_row, 0, [d, smena, p]); m_row += 1
+                if p not in curr_obs:
+                    # Ošetrenie pre alternatívne kancelárske pozície (ak je obsadené IR/IP, netreba hlásiť chýbajúce X a naopak)
+                    if p in ['IR', 'IP', 'X'] and any(k in curr_obs for k in ['IR', 'IP', 'X']):
+                        continue
+                    ws_miss.write_row(m_row, 0, [d, smena, p])
+                    m_row += 1
     
     wb.close()
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
