@@ -241,7 +241,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         is_workday = curr_d.weekday() < 5 and curr_d not in sviatky_aktualne
 
         for smena in ['D', 'N']:
-            curr_obs = list(vysledky[d][smena].values())
+            # Do zoznamu reálne obsadených hodnôt preženú aj cez short_label mapu, aby sme hľadali rovnaké skratky ('R', 'K', 'X')
+            curr_obs = [short_label(x) for x in vysledky[d][smena].values()]
             prio_check = []
             
             # --- 11.5-HODINOVÉ STÁLE POZÍCIE ---
@@ -262,14 +263,14 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 if use_extra_w:
                     prio_check += ['W_EXTRA']
                 
-                # Bezpečné prechádzanie očakávaných kancelárií priamo cez iteráciu tabuľky
                 wa = (((curr_d - START_REF).days // 7) % 2 == 0)
                 kanc_trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
                 
+                # Zisťujeme očakávané skratky, ktoré budeme hľadať v premennej curr_obs
                 for _, db_row in df_db.iterrows():
                     if CYKLY[int(db_row['Zmena'])][(curr_d - START_REF).days % 8] == 'D':
                         if str(db_row.get(kanc_trg, 'Nie')).lower() == 'áno':
-                            ocakavane_kancelarie.append(kanc_trg)
+                            ocakavane_kancelarie.append(short_label(kanc_trg))
                         elif str(db_row.get('X', 'Nie')).lower() == 'áno':
                             ocakavane_kancelarie.append('X')
 
@@ -279,9 +280,9 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                     ws_miss.write_row(m_row, 0, [d, smena, p])
                     m_row += 1
 
-            # 2. Bezpečná a presná kontrola počtu obsadených kancelárií (IR / IP / X)
+            # 2. Presná a ošetrená kontrola počtu obsadených kancelárií (R / K / X)
             if ocakavane_kancelarie:
-                pocet_obsadenych = sum(1 for p in curr_obs if p in ['IR', 'IP', 'X'])
+                pocet_obsadenych = sum(1 for p in curr_obs if p in ['R', 'K', 'X'])
                 pocet_ocakavanych = len(ocakavane_kancelarie)
                 
                 if pocet_obsadenych < pocet_ocakavanych:
@@ -295,8 +296,10 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                         
                         if v_pláne_je < v_pláne_ma_byt:
                             kolko_chyba_tu = v_pláne_ma_byt - v_pláne_je
+                            # Spätný prevod skratiek na pekný text pre výstupný Excel hárok
+                            vystupny_nazov = 'X' if p_typ == 'X' else ('IR' if p_typ == 'R' else 'IP')
                             for _ in range(min(kolko_chyba_tu, chybajuci_pocet)):
-                                ws_miss.write_row(m_row, 0, [d, smena, p_typ])
+                                ws_miss.write_row(m_row, 0, [d, smena, vystupny_nazov])
                                 m_row += 1
                                 chybajuci_pocet -= 1
     
