@@ -94,6 +94,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     _, days_count = calendar.monthrange(r, m)
     vysledky = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}
     
+    # KĽÚČOVÁ OPRAVA: reset indexov na unikátny číselný rozsah od 0 do konca tabuľky
     df_db = df_db.reset_index(drop=True)
     hod_fond_sofar = {idx: 0.0 for idx in df_db.index}
 
@@ -262,7 +263,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     # --- ZÁPIS NEOBSADENÝCH POZÍCIÍ NA SAMOSTATNÝ HÁROK ---
     ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], wb.add_format({'bold':True, 'border':1}))
     
-    unikatne_neobsadene = sorted(list(set(neobsadene_zaznamy)), key=lambda x: x)
+    unikatne_neobsadene = sorted(list(set(neobsadene_zaznamy)), key=lambda x: x[0])
     
     skutocny_row = 1
     for den_m, smena_m, poz_m in unikatne_neobsadene:
@@ -283,12 +284,14 @@ uploaded_file = st.file_uploader("Nahraj databaza_pozicii.xlsx", type="xlsx")
 if uploaded_file:
     ex = pd.ExcelFile(uploaded_file)
     
+    # 1. NAČÍTANIE + ULOŽENIE PÔVODNÉHO PORADIA
     df_db = ex.parse('Data').dropna(subset=['Priezvisko'])
     df_db['Povodne_Poradie'] = range(len(df_db))
     
     df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
     for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace(['nan', 'None'], '')
     
+    # Pridáme pôvodné poradie aj do tabuľky volno pre synchronizáciu
     df_v = df_v.merge(df_db[['Priezvisko', 'Meno', 'Povodne_Poradie']], on=['Priezvisko', 'Meno'], how='left')
 
     c1, c2, c3, c4, c5 = st.columns(5)
