@@ -242,28 +242,35 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
         for smena in ['D', 'N']:
             curr_obs = vysledky[d][smena].values()
+            prio_check = []
             
-            # SPÁJANIE A KONTROLA KOMPLETNE VŠETKÝCH POZÍCIÍ PODĽA SMENY A PODMIENOK V KÓDE
-            prio_check = ['C1', 'ZT', 'NB'] + PRIO_LIST
+            # --- 11.5-HODINOVÉ STÁLE POZÍCIE (KONTROLUJÚ SA VŽDY) ---
+            prio_check += ['C1', 'ZT'] + PRIO_LIST
             
-            # Pozície, ktoré sa plánujú výhradne cez deň (D) a za určitých podmienok
-            if smena == 'D':
-                if is_workday:
-                    prio_check += ['Z8', 'M']
-                    if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4]:
-                        prio_check += ['TP', 'S1', 'S2', 'S3']
-                    if use_extra_w:
-                        prio_check += ['W_EXTRA']
-                    
-                    # 7.5-hodinové kancelárske pozície (IR / IP alebo alternatívne X)
-                    wa = (((curr_d - START_REF).days // 7) % 2 == 0)
-                    kanc_trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
-                    prio_check += [kanc_trg, 'X']
+            # --- POZÍCIA NB (MÁ ŠPECIFICKÚ PODMIENKU PODĽA SMENY A DŇA) ---
+            if smena == 'N':
+                prio_check += ['NB']
+            elif smena == 'D' and not is_workday:
+                prio_check += ['NB']  # NB denná sa plánuje len cez víkendy/sviatky
 
-            # Kontrola a zápis každej neobsadenej pozície, ktorá reálne chýba
+            # --- 11.5 a 7.5-HODINOVÉ POZÍCIE NAVIAZANÉ LEN NA PRACOVNÉ DNI A DENNÚ SMENU ---
+            if smena == 'D' and is_workday:
+                prio_check += ['Z8', 'M']
+                if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4]:
+                    prio_check += ['TP', 'S1', 'S2', 'S3']
+                if use_extra_w:
+                    prio_check += ['W_EXTRA']
+                
+                # Určenie očakávanej kancelárskej pozície podľa rotácie týždňov
+                wa = (((curr_d - START_REF).days // 7) % 2 == 0)
+                kanc_trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
+                prio_check += [kanc_trg, 'X']
+
+            # Zápis neobsadených pozícií na hárok
             for p in prio_check:
                 if p not in curr_obs:
-                    # Ošetrenie pre alternatívne kancelárske pozície (ak je obsadené IR/IP, netreba hlásiť chýbajúce X a naopak)
+                    # Ak systém hľadá alternatívne kancelárske pozície (IR/IP/X), zapíše chýbajúcu pozíciu iba vtedy,
+                    # ak v daný deň nie je obsadená žiadna z týchto vzájomne sa zastupujúcich pozícií
                     if p in ['IR', 'IP', 'X'] and any(k in curr_obs for k in ['IR', 'IP', 'X']):
                         continue
                     ws_miss.write_row(m_row, 0, [d, smena, p])
@@ -292,7 +299,6 @@ if uploaded_file:
     df_v = df_v.merge(df_db[['Priezvisko', 'Meno', 'Povodne_Poradie']], on=['Priezvisko', 'Meno'], how='left')
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    # Pridané číselné políčko na výber ľubovoľného roku
     rok = c1.number_input("Rok", min_value=2020, max_value=2100, value=2026)
     mes = c2.selectbox("Mesiac", range(1, 13), index=2)
     fon = c3.number_input("Fond", value=155.0)
@@ -304,7 +310,6 @@ if uploaded_file:
     
     st.subheader("Uprav absencie (zoradené abecedne pre pohodlie)")
     
-    # EDITOR ZORADÍME ABECEDNE
     df_v_alphabetical = df_v.sort_values(by=['Priezvisko', 'Meno'])
     
     df_v_edit = st.data_editor(
@@ -314,11 +319,10 @@ if uploaded_file:
         column_config={
             "Priezvisko": st.column_config.Column(disabled=True),
             "Meno": st.column_config.Column(disabled=True),
-            "Povodne_Poradie": None # Skryjeme pomocný stĺpec
+            "Povodne_Poradie": None 
         }
     )
     
     if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
-        # Pri generovaní posielame vybraný rok namiesto fixného 2026
         xlsx, name = generuj_final(mes, rok, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db)
         st.download_button("📥 STIAHNUŤ VYGENEROVANÝ PLÁN", data=xlsx, file_name=name, use_container_width=True)
