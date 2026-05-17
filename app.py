@@ -88,10 +88,10 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     f_kz = wb.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'})
     f_v = wb.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
     
-    # OPRAVENÉ: Kľúčové slovo zmenené na pattern_background_color podľa špecifikácie xlsxwriter
-    f_d_vzor = wb.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white', 'pattern': 4, 'pattern_background_color': '#226622'})
-    f_kz_vzor = wb.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white', 'pattern': 4, 'pattern_background_color': '#003399'})
-    f_v_vzor = wb.add_format({**fmt_sep, 'bg_color': '#00FFCC', 'pattern': 4, 'pattern_background_color': '#00BB99'})
+    # OPRAVENÉ: Správna definícia vzorov (šrafovania) pre xlsxwriter pomocou kľúčov pattern, bg_color a fg_color
+    f_d_vzor = wb.add_format({**fmt_sep, 'font_color': 'white', 'pattern': 4, 'bg_color': '#226622', 'fg_color': '#339933'})
+    f_kz_vzor = wb.add_format({**fmt_sep, 'font_color': 'white', 'pattern': 4, 'bg_color': '#003399', 'fg_color': '#0066FF'})
+    f_v_vzor = wb.add_format({**fmt_sep, 'font_color': 'black', 'pattern': 4, 'bg_color': '#00BB99', 'fg_color': '#00FFCC'})
 
     fmt_num = wb.add_format({**fmt_sep, 'num_format': '#,##0.0'})
     f_c1_d = wb.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
@@ -287,7 +287,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
         r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
-        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
+        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
         full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
