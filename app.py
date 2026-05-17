@@ -97,11 +97,35 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         priez = str(row['Priezvisko']).strip()
         abs_map[priez] = {'d': parse_days(row['Dovolenka']), 'kz': parse_days(row['KZ']), 'v': parse_days(row['Volno'])}
 
+    # Vytvorenie pomocného mapovania pre osobné informácie zamestnancov, aby sme sa vyhli nebezpečnému .loc[idx]
+    db_info = {}
+    for idx, row in df_db.iterrows():
+        db_info[idx] = {
+            'Priezvisko': str(row['Priezvisko']).strip(),
+            'Zmena': int(row['Zmena']),
+            'C1': str(row.get('C1', 'Nie')).lower(),
+            'Priorita_ZT': str(row.get('Priorita_ZT', 'Nie')).lower(),
+            'ZT': str(row.get('ZT', 'Nie')).lower(),
+            'Priorita_NB': str(row.get('Priorita_NB', 'Nie')).lower(),
+            'NB': str(row.get('NB', 'Nie')).lower(),
+            'Priorita_Z8': str(row.get('Priorita_Z8', 'Nie')).lower(),
+            'Z8': str(row.get('Z8', 'Nie')).lower(),
+            'TP': str(row.get('TP', 'Nie')).lower(),
+            'S1': str(row.get('S1', 'Nie')).lower(),
+            'S2': str(row.get('S2', 'Nie')).lower(),
+            'S3': str(row.get('S3', 'Nie')).lower(),
+            'W1': str(row.get('W1', 'Nie')).lower(),
+            'M': str(row.get('M', 'Nie')).lower(),
+            'IR': str(row.get('IR', 'Nie')).lower(),
+            'IP': str(row.get('IP', 'Nie')).lower(),
+            'X': str(row.get('X', 'Nie')).lower()
+        }
+
     for idx in df_db.index:
-        priez = str(df_db.loc[idx, 'Priezvisko']).strip()
+        priez = db_info[idx]['Priezvisko']
         ab = abs_map.get(priez, {'d':set(), 'kz':set()})
         abs_dni = ab['d'] | ab['kz']
-        z_os = int(df_db.loc[idx, 'Zmena'])
+        z_os = db_info[idx]['Zmena']
         for d_val in abs_dni:
             if d_val <= days_count:
                 if CYKLY[z_os][(date(r, m, d_val) - START_REF).days % 8] in ['D', 'N']:
@@ -114,11 +138,11 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         def get_prioritized_people(smena_target, is_75_poz=False):
             pool = []
             for idx in df_db.index:
-                ma_cyk = CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena_target
+                ma_cyk = CYKLY[db_info[idx]['Zmena']][(curr_d - START_REF).days % 8] == smena_target
                 penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
                 fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
                 pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-            return [x for x in sorted(pool, key=lambda x: x)]
+            return [x[0] for x in sorted(pool, key=lambda x: x[1])]
 
         if is_workday:
             nas_z8 = False
@@ -126,17 +150,17 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 if nas_z8: break
                 for idx in get_prioritized_people('D', True):
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip()
+                    priez = db_info[idx]['Priezvisko']
                     ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
-                    if d not in cv and str(df_db.loc[idx].get(col_f,'Nie')).lower() == 'áno':
+                    if d not in cv and db_info[idx][col_f] == 'áno':
                         vysledky[d]['D'][idx] = "Z8"; hod_fond_sofar[idx] += 7.5; nas_z8 = True; break
 
         for smena in ['D', 'N']:
             for idx in df_db.index:
                 if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena and str(df_db.loc[idx].get('C1','Nie')).lower() == 'áno':
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip()
+                if CYKLY[db_info[idx]['Zmena']][(curr_d - START_REF).days % 8] == smena and db_info[idx]['C1'] == 'áno':
+                    priez = db_info[idx]['Priezvisko']
                     ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
                     if d not in cv and moze_nastupit(idx, d, smena, 'C1', vysledky):
@@ -148,16 +172,16 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 pool = get_prioritized_people(smena)
                 for idx in pool:
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    if str(df_db.loc[idx].get(f"Priorita_{p_n}",'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
-                        priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                    if db_info[idx][f"Priorita_{p_n}"] == 'áno' and CYKLY[db_info[idx]['Zmena']][(curr_d - START_REF).days % 8] == smena:
+                        priez = db_info[idx]['Priezvisko']; ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                         cv = ab['d'] | ab['kz'] | ab['v']
                         if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
                             vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
                 if not nas:
                     for idx in pool:
                         if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        if str(df_db.loc[idx].get(p_n,'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
-                            priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                        if db_info[idx][p_n] == 'áno' and CYKLY[db_info[idx]['Zmena']][(curr_d - START_REF).days % 8] == smena:
+                            priez = db_info[idx]['Priezvisko']; ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                             cv = ab['d'] | ab['kz'] | ab['v']
                             if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
                                 vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
@@ -168,17 +192,17 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                     if poz in vysledky[d]['D'].values(): continue
                     for idx in get_prioritized_people('D'):
                         if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                        priez = db_info[idx]['Priezvisko']; ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                         cv = ab['d'] | ab['kz'] | ab['v']
                         p_col = poz if poz != 'W_EXTRA' else 'W1'
-                        if d not in cv and str(df_db.loc[idx].get(p_col,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, 'D', poz, vysledky):
+                        if d not in cv and db_info[idx][p_col] == 'áno' and moze_nastupit(idx, d, 'D', poz, vysledky):
                             vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
 
             for poz in PRIO_LIST:
                 if poz in vysledky[d][smena].values(): continue
                 for idx in get_prioritized_people(smena):
                     if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                    priez = db_info[idx]['Priezvisko']; ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
                     if d not in cv and str(df_db.loc[idx].get(poz,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, smena, poz, vysledky):
                         vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
@@ -188,10 +212,10 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
             trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
             for idx in get_prioritized_people('D', True):
                 if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                priez = db_info[idx]['Priezvisko']; ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
                 cv = ab['d'] | ab['kz'] | ab['v']
                 if d not in cv:
-                    fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
+                    fx = trg if db_info[idx][trg] == 'áno' else next((p for p in ['X'] if db_info[idx][p] == 'áno'), None)
                     if fx: vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
 
     ws.set_column(0, 0, 25)
@@ -227,7 +251,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
         r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
-        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
+        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
         full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
@@ -241,10 +265,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         is_workday = curr_d.weekday() < 5 and curr_d not in sviatky_aktualne
 
         for smena in ['D', 'N']:
-            # Pôvodné hodnoty z výstupu kompletne preženieme cez short_label (rovnako ako na hlavnom hárku)
             curr_obs = [short_label(x) for x in vysledky[d][smena].values()]
-            
-            # 1. KONTROLA ŠTANDARDNÝCH POZÍCIÍ (už skrátených pre porovnanie)
             prio_check = ['C', 'ZT'] + [short_label(p) for p in PRIO_LIST]
             
             if smena == 'N':
@@ -257,17 +278,15 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4]:
                     prio_check += ['TP', 'S1', 'S2', 'S3']
                 if use_extra_w:
-                    prio_check += ['W']  # W_EXTRA sa skracuje na 'W'
+                    prio_check += ['W']
 
             for p in prio_check:
                 if p not in curr_obs:
-                    # Spätný prepis zobrazenia pre W a C, aby to bolo prehľadné
                     krasny_nazov = p
                     if p == 'W' and use_extra_w and 'W' not in curr_obs: krasny_nazov = 'W_EXTRA'
                     ws_miss.write_row(m_row, 0, [d, smena, krasny_nazov])
                     m_row += 1
 
-            # 2. KONTROLA KANCELÁRIÍ IR / IP / X (ČISTO PODĽA SKRATIEK R / K / X)
             ocakavane_kancelarie = []
             if smena == 'D' and is_workday:
                 wa = (((curr_d - START_REF).days // 7) % 2 == 0)
