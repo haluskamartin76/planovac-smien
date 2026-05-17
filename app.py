@@ -118,7 +118,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
                 fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
                 pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-            return [x[0] for x in sorted(pool, key=lambda x: x[1])]
+            return [x for x in sorted(pool, key=lambda x: x)]
 
         if is_workday:
             nas_z8 = False
@@ -227,7 +227,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
         r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
-        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
+        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
         full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
@@ -241,32 +241,38 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         is_workday = curr_d.weekday() < 5 and curr_d not in sviatky_aktualne
 
         for smena in ['D', 'N']:
-            # Do zoznamu reálne obsadených hodnôt preženú aj cez short_label mapu, aby sme hľadali rovnaké skratky ('R', 'K', 'X')
+            # Pôvodné hodnoty z výstupu kompletne preženieme cez short_label (rovnako ako na hlavnom hárku)
             curr_obs = [short_label(x) for x in vysledky[d][smena].values()]
-            prio_check = []
             
-            # --- 11.5-HODINOVÉ STÁLE POZÍCIE ---
-            prio_check += ['C1', 'ZT'] + PRIO_LIST
+            # 1. KONTROLA ŠTANDARDNÝCH POZÍCIÍ (už skrátených pre porovnanie)
+            prio_check = ['C', 'ZT'] + [short_label(p) for p in PRIO_LIST]
             
-            # --- POZÍCIA NB ---
             if smena == 'N':
                 prio_check += ['NB']
             elif smena == 'D' and not is_workday:
                 prio_check += ['NB']
 
-            # --- POZÍCIE PRE PRACOVNÉ DNI A DENNÚ SMENU ---
-            ocakavane_kancelarie = []
             if smena == 'D' and is_workday:
                 prio_check += ['Z8', 'M']
                 if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4]:
                     prio_check += ['TP', 'S1', 'S2', 'S3']
                 if use_extra_w:
-                    prio_check += ['W_EXTRA']
-                
+                    prio_check += ['W']  # W_EXTRA sa skracuje na 'W'
+
+            for p in prio_check:
+                if p not in curr_obs:
+                    # Spätný prepis zobrazenia pre W a C, aby to bolo prehľadné
+                    krasny_nazov = p
+                    if p == 'W' and use_extra_w and 'W' not in curr_obs: krasny_nazov = 'W_EXTRA'
+                    ws_miss.write_row(m_row, 0, [d, smena, krasny_nazov])
+                    m_row += 1
+
+            # 2. KONTROLA KANCELÁRIÍ IR / IP / X (ČISTO PODĽA SKRATIEK R / K / X)
+            ocakavane_kancelarie = []
+            if smena == 'D' and is_workday:
                 wa = (((curr_d - START_REF).days // 7) % 2 == 0)
                 kanc_trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
                 
-                # Zisťujeme očakávané skratky, ktoré budeme hľadať v premennej curr_obs
                 for _, db_row in df_db.iterrows():
                     if CYKLY[int(db_row['Zmena'])][(curr_d - START_REF).days % 8] == 'D':
                         if str(db_row.get(kanc_trg, 'Nie')).lower() == 'áno':
@@ -274,13 +280,6 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                         elif str(db_row.get('X', 'Nie')).lower() == 'áno':
                             ocakavane_kancelarie.append('X')
 
-            # 1. Klasická kontrola štandardných pozícií
-            for p in prio_check:
-                if p not in curr_obs:
-                    ws_miss.write_row(m_row, 0, [d, smena, p])
-                    m_row += 1
-
-            # 2. Presná a ošetrená kontrola počtu obsadených kancelárií (R / K / X)
             if ocakavane_kancelarie:
                 pocet_obsadenych = sum(1 for p in curr_obs if p in ['R', 'K', 'X'])
                 pocet_ocakavanych = len(ocakavane_kancelarie)
@@ -291,12 +290,11 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                     for p_typ in set(ocakavane_kancelarie):
                         if chybajuci_pocet <= 0:
                             break
-                        v_pláne_je = sum(1 for x in curr_obs if x == p_typ)
-                        v_pláne_ma_byt = ocakavane_kancelarie.count(p_typ)
+                        v_plane_je = sum(1 for x in curr_obs if x == p_typ)
+                        v_plane_ma_byt = ocakavane_kancelarie.count(p_typ)
                         
-                        if v_pláne_je < v_pláne_ma_byt:
-                            kolko_chyba_tu = v_pláne_ma_byt - v_pláne_je
-                            # Spätný prevod skratiek na pekný text pre výstupný Excel hárok
+                        if v_plane_je < v_plane_ma_byt:
+                            kolko_chyba_tu = v_plane_ma_byt - v_plane_je
                             vystupny_nazov = 'X' if p_typ == 'X' else ('IR' if p_typ == 'R' else 'IP')
                             for _ in range(min(kolko_chyba_tu, chybajuci_pocet)):
                                 ws_miss.write_row(m_row, 0, [d, smena, vystupny_nazov])
