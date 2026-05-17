@@ -163,7 +163,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                                 vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
 
             if smena == 'D' and is_workday:
-                specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
+                # UPRAVENÉ: Parlamentné pozície sa plánujú len v UTOROK (1), STREDU (2), ŠTVRTOK (3) a PIATOK (4) -> vylúčená sobota, nedeľa, pondelok
+                specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4] else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
                 for poz in specs:
                     if poz in vysledky[d]['D'].values(): continue
                     for idx in get_prioritized_people('D'):
