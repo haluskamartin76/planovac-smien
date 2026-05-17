@@ -244,16 +244,16 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
             curr_obs = vysledky[d][smena].values()
             prio_check = []
             
-            # --- 11.5-HODINOVÉ STÁLE POZÍCIE (KONTROLUJÚ SA VŽDY) ---
+            # --- 11.5-HODINOVÉ STÁLE POZÍCIE ---
             prio_check += ['C1', 'ZT'] + PRIO_LIST
             
-            # --- POZÍCIA NB (MÁ ŠPECIFICKÚ PODMIENKU PODĽA SMENY A DŇA) ---
+            # --- POZÍCIA NB ---
             if smena == 'N':
                 prio_check += ['NB']
             elif smena == 'D' and not is_workday:
-                prio_check += ['NB']  # NB denná sa plánuje len cez víkendy/sviatky
+                prio_check += ['NB']
 
-            # --- 11.5 a 7.5-HODINOVÉ POZÍCIE NAVIAZANÉ LEN NA PRACOVNÉ DNI A DENNÚ SMENU ---
+            # --- POZÍCIE NAVIAZANÉ LEN NA PRACOVNÉ DNI A DENNÚ SMENU ---
             if smena == 'D' and is_workday:
                 prio_check += ['Z8', 'M']
                 if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4]:
@@ -261,18 +261,34 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 if use_extra_w:
                     prio_check += ['W_EXTRA']
                 
-                # Určenie očakávanej kancelárskej pozície podľa rotácie týždňov
+                # URČENIE, ČI MÁ BYŤ KANCELÁRSKY BLOK (IR/IP/X) REÁLNE OBSADENÝ PODĽA DATABÁZY
                 wa = (((curr_d - START_REF).days // 7) % 2 == 0)
                 kanc_trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
-                prio_check += [kanc_trg, 'X']
+                
+                ma_byt_kancelaria = False
+                for idx in df_db.index:
+                    # Kontrola, či má zamestnanec podľa svojho cyklu v tento deň službu v práci
+                    ma_cykel_v_ten_den = CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == 'D'
+                    if ma_cykel_v_ten_den:
+                        # Ak má priradené Áno na cieľovú kanceláriu alebo záložné X, táto pozícia v ten deň v pláne musí byť
+                        if str(df_db.loc[idx].get(kanc_trg, 'Nie')).lower() == 'áno' or str(df_db.loc[idx].get('X', 'Nie')).lower() == 'áno':
+                            ma_byt_kancelaria = True
+                            break
+                
+                if ma_byt_kancelaria:
+                    prio_check += ['IR', 'IP', 'X']
 
-            # Zápis neobsadených pozícií na hárok
+            # Zápis chýbajúcich pozícií na hárok
             for p in prio_check:
                 if p not in curr_obs:
-                    # Ak systém hľadá alternatívne kancelárske pozície (IR/IP/X), zapíše chýbajúcu pozíciu iba vtedy,
-                    # ak v daný deň nie je obsadená žiadna z týchto vzájomne sa zastupujúcich pozícií
-                    if p in ['IR', 'IP', 'X'] and any(k in curr_obs for k in ['IR', 'IP', 'X']):
-                        continue
+                    # Ak kontrolujeme kancelársku skupinu (IR/IP/X) a v pláne reálne chýba hľadaná pozícia,
+                    # zapíšeme ju len v prípade, že v daný deň nie je obsadená ani jedna alternatíva (čiže nastal kompletný výpadok)
+                    if p in ['IR', 'IP', 'X']:
+                        if any(k in curr_obs for k in ['IR', 'IP', 'X']):
+                            continue
+                        # Pre lepšiu čitateľnosť zapíšeme priamo pozíciu, ktorá mala rotovať (alebo záložné X)
+                        p = kanc_trg if p != 'X' else 'X'
+                        
                     ws_miss.write_row(m_row, 0, [d, smena, p])
                     m_row += 1
     
@@ -288,14 +304,12 @@ uploaded_file = st.file_uploader("Nahraj databaza_pozicii.xlsx", type="xlsx")
 if uploaded_file:
     ex = pd.ExcelFile(uploaded_file)
     
-    # 1. NAČÍTANIE + ULOŽENIE PÔVODNÉHO PORADIA
     df_db = ex.parse('Data').dropna(subset=['Priezvisko'])
     df_db['Povodne_Poradie'] = range(len(df_db))
     
     df_v = ex.parse('Volno') if 'Volno' in ex.sheet_names else pd.DataFrame(columns=['Priezvisko', 'Meno', 'Dovolenka', 'KZ', 'Volno'])
     for col in ['Dovolenka', 'KZ', 'Volno']: df_v[col] = df_v[col].fillna("").astype(str).replace(['nan', 'None'], '')
     
-    # Pridáme pôvodné poradie aj do tabuľky volno pre synchronizáciu
     df_v = df_v.merge(df_db[['Priezvisko', 'Meno', 'Povodne_Poradie']], on=['Priezvisko', 'Meno'], how='left')
 
     c1, c2, c3, c4, c5 = st.columns(5)
