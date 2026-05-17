@@ -3,13 +3,40 @@ import pandas as pd
 import calendar, random, io, os, xlsxwriter
 from datetime import date, datetime
 
-# --- KONFIGURÁCIA ---
-SVIATKY_2026 = {
-    date(2026,1,1), date(2026,1,6), date(2026,4,3), date(2026,4,6),
-    date(2026,5,1), date(2026,5,8), date(2026,7,5), date(2026,8,29),
-    date(2026,9,1), date(2026,9,15), date(2026,11,1), date(2026,11,17),
-    date(2026,12,24), date(2026,12,25), date(2026,12,26)
-}
+# --- DYNAMICKÁ KONFIGURÁCIA SVIATKOV ---
+def ziskaj_sviatky(rok):
+    # Výpočet Veľkej noci (Gaussov algoritmus pre západnú cirkev)
+    a = rok % 19
+    b = rok % 4
+    c = rok % 7
+    d = (19 * a + 24) % 30
+    e = (2 * b + 4 * c + 6 * d + 5) % 7
+    velka_noc_dni = 22 + d + e
+    
+    if velka_noc_dni > 31:
+        mesiac_vn = 4
+        den_vn = velka_noc_dni - 31
+    else:
+        mesiac_vn = 3
+        den_vn = velka_noc_dni
+
+    if d == 29 and e == 6:
+        den_vn = 19; mesiac_vn = 4
+    elif d == 28 and e == 6 and a > 10:
+        den_vn = 18; mesiac_vn = 4
+
+    v_nedela = date(rok, mesiac_vn, den_vn)
+    v_piatok = date.fromordinal(v_nedela.toordinal() - 2)
+    v_pondelok = date.fromordinal(v_nedela.toordinal() + 1)
+
+    # Fixné štátne sviatky na Slovensku + dynamická Veľká noc
+    return {
+        date(rok, 1, 1), date(rok, 1, 6), v_piatok, v_pondelok,
+        date(rok, 5, 1), date(rok, 5, 8), date(rok, 7, 5), date(rok, 8, 29),
+        date(rok, 9, 1), date(rok, 9, 15), date(rok, 11, 1), date(rok, 11, 17),
+        date(rok, 12, 24), date(rok, 12, 25), date(rok, 12, 26)
+    }
+
 PRIO_LIST = ['C2', 'W1', 'W2', 'Z1', 'Z2', 'G', 'GH', 'SH']
 START_REF = date(2026, 3, 1)
 CYKLY = {1: "DNVDNVVV", 2: "VVDNVDNV", 3: "VDNVVVDN", 4: "NVVVDNVD"}
@@ -39,6 +66,9 @@ def moze_nastupit(idx, d, smena, poz, vysledky):
     return True
 
 def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_extra_w, df_db):
+    # Vygenerovanie zoznamu sviatkov pre vybraný rok
+    sviatky_aktualne = ziskaj_sviatky(r)
+    
     # VRÁTENIE PORADIA NA PÔVODNÉ PODĽA INDEXU
     df_db = df_db.sort_values(by='Povodne_Poradie')
     
@@ -79,7 +109,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
     for d in range(1, days_count + 1):
         curr_d = date(r, m, d)
-        is_workday = curr_d.weekday() < 5 and curr_d not in SVIATKY_2026
+        is_workday = curr_d.weekday() < 5 and curr_d not in sviatky_aktualne
 
         def get_prioritized_people(smena_target, is_75_poz=False):
             pool = []
@@ -170,7 +200,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     ZZ = days_count + 10
     ws.set_column(ZZ, ZZ, None, None, {'hidden': True})
 
-    col_bg_map = {d: ('#40B4EE' if date(r,m,d) in SVIATKY_2026 else ('#FFCC66' if date(r,m,d).weekday()==5 else ('#CC9900' if date(r,m,d).weekday()==6 else '#FFFFFF'))) for d in range(1, days_count+1)}
+    col_bg_map = {d: ('#40B4EE' if date(r,m,d) in sviatky_aktualne else ('#FFCC66' if date(r,m,d).weekday()==5 else ('#CC9900' if date(r,m,d).weekday()==6 else '#FFFFFF'))) for d in range(1, days_count+1)}
     for d in range(1, days_count + 1):
         ws.write(0, d, d, wb.add_format({**fmt_b, 'bg_color': col_bg_map[d]}))
     ws.write(0, days_count+1, "Sumár", wb.add_format({'bold':True, 'border':1}))
@@ -198,7 +228,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
         f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
-        full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
+        full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
         ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
@@ -209,7 +239,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     for d in range(1, days_count + 1):
         for smena in ['D', 'N']:
             curr_obs = vysledky[d][smena].values()
-            prio_check = PRIO_LIST + (['Z8'] if smena == 'D' and date(r,m,d).weekday()<5 and date(r,m,d) not in SVIATKY_2026 else [])
+            prio_check = PRIO_LIST + (['Z8'] if smena == 'D' and date(r,m,d).weekday()<5 and date(r,m,d) not in sviatky_aktualne else [])
             for p in prio_check:
                 if p not in curr_obs: ws_miss.write_row(m_row, 0, [d, smena, p]); m_row += 1
     
@@ -218,7 +248,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
 # --- UI STREAMLIT ---
 st.set_page_config(page_title="Plánovač 2026", layout="wide")
-st.title("🚀 Plánovač Zmien 2026")
+st.title("🚀 Plánovač Zmien")
 
 uploaded_file = st.file_uploader("Nahraj databaza_pozicii.xlsx", type="xlsx")
 
@@ -235,14 +265,16 @@ if uploaded_file:
     # Pridáme pôvodné poradie aj do tabuľky volno pre synchronizáciu
     df_v = df_v.merge(df_db[['Priezvisko', 'Meno', 'Povodne_Poradie']], on=['Priezvisko', 'Meno'], how='left')
 
-    c1, c2, c3, c4 = st.columns(4)
-    mes = c1.selectbox("Mesiac", range(1, 13), index=2)
-    fon = c2.number_input("Fond", value=155.0)
-    parl, extra_w = c3.checkbox("Parlament", True), c4.checkbox("Extra W", True)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    # Pridané číselné políčko na výber ľubovoľného roku
+    rok = c1.number_input("Rok", min_value=2020, max_value=2100, value=2026)
+    mes = c2.selectbox("Mesiac", range(1, 13), index=2)
+    fon = c3.number_input("Fond", value=155.0)
+    parl, extra_w = c4.checkbox("Parlament", True), c5.checkbox("Extra W", True)
     
-    _, last_day = calendar.monthrange(2026, mes)
-    p_od = st.date_input("Parlament Od", date(2026, mes, 1), format="DD/MM/YYYY")
-    p_do = st.date_input("Parlament Do", date(2026, mes, last_day), format="DD/MM/YYYY")
+    _, last_day = calendar.monthrange(rok, mes)
+    p_od = st.date_input("Parlament Od", date(rok, mes, 1), format="DD/MM/YYYY")
+    p_do = st.date_input("Parlament Do", date(rok, mes, last_day), format="DD/MM/YYYY")
     
     st.subheader("Uprav absencie (zoradené abecedne pre pohodlie)")
     
@@ -261,6 +293,6 @@ if uploaded_file:
     )
     
     if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
-        # Pri generovaní posielame df_db, ktorý si vnútri funkcie generuj_final zoradí dáta podľa Povodne_Poradie
-        xlsx, name = generuj_final(mes, 2026, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db)
+        # Pri generovaní posielame vybraný rok namiesto fixného 2026
+        xlsx, name = generuj_final(mes, rok, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db)
         st.download_button("📥 STIAHNUŤ VYGENEROVANÝ PLÁN", data=xlsx, file_name=name, use_container_width=True)
