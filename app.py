@@ -163,8 +163,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                                 vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
 
             if smena == 'D' and is_workday:
-                # UPRAVENÉ: Parlamentné pozície sa plánujú len v UTOROK (1), STREDU (2), ŠTVRTOK (3) a PIATOK (4) -> vylúčená sobota, nedeľa, pondelok
-                specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4] else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
+                # Blokovanie parlamentných pozícií na pondelok, sobotu a nedeľu (weekday 0, 5, 6)
+                specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() not in [0, 5, 6] else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
                 for poz in specs:
                     if poz in vysledky[d]['D'].values(): continue
                     for idx in get_prioritized_people('D'):
@@ -189,7 +189,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
             trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
             for idx in get_prioritized_people('D', True):
                 if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v::set()})
                 cv = ab['d'] | ab['kz'] | ab['v']
                 if d not in cv:
                     fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
@@ -235,14 +235,72 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
         ws.conditional_format(row_ptr, days_count+2, row_ptr+1, days_count+2, {'type': 'cell', 'criteria': '>', 'value': 0, 'format': fmt_low})
 
+    # --- KONTROLA NEOBSADENÝCH POZÍCIÍ ---
     ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], wb.add_format({'bold':True, 'border':1}))
     m_row = 1
     for d in range(1, days_count + 1):
+        curr_d = date(r, m, d)
+        is_workday = curr_d.weekday() < 5 and curr_d not in sviatky_aktualne
+
         for smena in ['D', 'N']:
-            curr_obs = vysledky[d][smena].values()
-            prio_check = PRIO_LIST + (['Z8'] if smena == 'D' and date(r,m,d).weekday()<5 and date(r,m,d) not in sviatky_aktualne else [])
-            for p in prio_check:
-                if p not in curr_obs: ws_miss.write_row(m_row, 0, [d, smena, p]); m_row += 1
+            # Výsledné reálne obsadené značky z Excelu (C, Z, W, R, K, X...)
+            realne_na_harku = [short_label(x) for x in vysledky[d][smena].values()]
+            
+            # 1. KONTROLA ŠTANDARDNÝCH POZÍCIÍ (Porovnávame ich pod skratkami 'C', 'ZT', 'Z', 'W' atď.)
+            vsetky_prio = ['C1', 'ZT'] + PRIO_LIST
+            prio_skratky = list(set([short_label(p) for p in vsetky_prio]))
+            
+            # Pridanie podmienených pozícií
+            if smena == 'N' or (smena == 'D' and not is_workday):
+                prio_skratky.append('NB')
+            
+            if smena == 'D' and is_workday:
+                prio_skratky += ['Z8', 'M']
+                if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() not in [0, 5, 6]:
+                    prio_skratky += ['TP', 'S1', 'S2', 'S3']
+                if use_extra_w:
+                    prio_skratky.append('W_EXTRA')
+
+            # Overenie voči skutočnosti na hárku
+            for p in prio_skratky:
+                # Mapovanie skratiek na pekné texty pre výpis
+                hladana_znacka = 'W' if p == 'W_EXTRA' else p
+                if hladana_znacka not in realne_na_harku:
+                    ws_miss.write_row(m_row, 0, [d, smena, p])
+                    m_row += 1
+
+            # 2. KONTROLA KANCELÁRIÍ IR / IP / X (IZOLOVANÝ POČTOVÝ SYSTÉM)
+            if smena == 'D' and is_workday:
+                wa = (((curr_d - START_REF).days // 7) % 2 == 0)
+                kanc_trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
+                
+                # Zistíme, koľko zamestnancov malo v tento deň podľa cyklu pracovať na kancelárii / X
+                ocakavany_pocet = 0
+                for idx in df_db.index:
+                    if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == 'D':
+                        if str(df_db.loc[idx].get(kanc_trg, 'Nie')).lower() == 'áno' or str(df_db.loc[idx].get('X', 'Nie')).lower() == 'áno':
+                            ocakavany_pocet += 1
+                
+                # Spočítame koľko z nich reálne nastúpilo (značky R, K, X)
+                realny_pocet = sum(1 for x in realne_na_harku if x in ['R', 'K', 'X'])
+                
+                if realny_pocet < ocakavany_pocet:
+                    kolko_chyba = ocakavany_pocet - realny_pocet
+                    # Chýbajúce miesta zapíšeme pod správnym názvom rotujúcej pozície (alebo záložnej X)
+                    priezviska_v_dile = []
+                    for idx in df_db.index:
+                        if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == 'D':
+                            if str(df_db.loc[idx].get(kanc_trg, 'Nie')).lower() == 'áno': priezviska_v_dile.append(kanc_trg)
+                            elif str(df_db.loc[idx].get('X', 'Nie')).lower() == 'áno': priezviska_v_dile.append('X')
+                    
+                    # Logicky doplníme do zoznamu to, čo fyzicky chýba
+                    for p_typ in priezviska_v_dile:
+                        if kolko_chyba <= 0: break
+                        aktualna_skratka = short_label(p_typ)
+                        if aktualna_skratka not in realne_na_harku:
+                            ws_miss.write_row(m_row, 0, [d, smena, p_typ])
+                            m_row += 1
+                            kolko_chyba -= 1
     
     wb.close()
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
@@ -267,7 +325,6 @@ if uploaded_file:
     df_v = df_v.merge(df_db[['Priezvisko', 'Meno', 'Povodne_Poradie']], on=['Priezvisko', 'Meno'], how='left')
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    # Pridané číselné políčko na výber ľubovoľného roku
     rok = c1.number_input("Rok", min_value=2020, max_value=2100, value=2026)
     mes = c2.selectbox("Mesiac", range(1, 13), index=2)
     fon = c3.number_input("Fond", value=155.0)
@@ -279,7 +336,6 @@ if uploaded_file:
     
     st.subheader("Uprav absencie (zoradené abecedne pre pohodlie)")
     
-    # EDITOR ZORADÍME ABECEDNE
     df_v_alphabetical = df_v.sort_values(by=['Priezvisko', 'Meno'])
     
     df_v_edit = st.data_editor(
@@ -289,11 +345,10 @@ if uploaded_file:
         column_config={
             "Priezvisko": st.column_config.Column(disabled=True),
             "Meno": st.column_config.Column(disabled=True),
-            "Povodne_Poradie": None # Skryjeme pomocný stĺpec
+            "Povodne_Poradie": None 
         }
     )
     
     if st.button("🚀 GENEROVAŤ PLÁN", type="primary", use_container_width=True):
-        # Pri generovaní posielame vybraný rok namiesto fixného 2026
         xlsx, name = generuj_final(mes, rok, fon, parl, p_od, p_do, df_v_edit, extra_w, df_db)
         st.download_button("📥 STIAHNUŤ VYGENEROVANÝ PLÁN", data=xlsx, file_name=name, use_container_width=True)
