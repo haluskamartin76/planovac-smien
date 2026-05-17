@@ -80,8 +80,9 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
     fmt_b = {'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': False, 'font_size': 9}
     fmt_sep = {**fmt_b, 'bottom': 2}
+    # OPRAVENÁ SYNTAX: Pridaný chýbajúci zoznam pre zip() na začiatku riadku
     z_fmts = {str(i): wb.add_format({**fmt_sep, 'bg_color': c, 'font_color': fc})
-              for i, c, fc in zip(, ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
+              for i, c, fc in zip(['1','2','3','4'], ['#B2B2B2','#FF0000','#FFFF00','#003399'], ['white','white','black','white'])}
 
     # Základné formáty pre absencie
     f_d = wb.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white'})
@@ -154,7 +155,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 penalty = 10000 if hod_fond_sofar[p['id']] >= fond_limit else 0
                 fond_score = -hod_fond_sofar[p['id']] if is_75_poz else hod_fond_sofar[p['id']]
                 pool.append((p, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-            # OPRAVA RADENIA: Radíme výhradne podľa n-tice kritérií na indexe 1, nie podľa slovníka p
+            # OPRAVA RADENIA: Radíme bezpečne iba podľa n-tice skóre na indexe 1, nie podľa slovníka p
             return [x for x in sorted(pool, key=lambda x: x[1])]
 
         if is_workday:
@@ -207,7 +208,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                                 neobsadene_zaznamy.append((d, smena, p_n))
 
             if smena == 'D' and is_workday:
-                specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() not in else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
+                specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() not in [0, 5, 6] else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
                 for poz in specs:
                     if poz in vysledky[d]['D'].values(): continue
                     for p, _ in get_prioritized_people('D'):
@@ -288,7 +289,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
         r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
-        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
+        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
         full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
