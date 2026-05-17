@@ -88,10 +88,10 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     f_kz = wb.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white'})
     f_v = wb.add_format({**fmt_sep, 'bg_color': '#00FFCC'})
     
-    # NOVÉ: Formáty so šrafovaním (vzorom) pre prípad, že absencia padne na pracovnú zmenu
-    f_d_vzor = wb.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white', 'pattern': 4, 'pattern_bg_color': '#226622'})
-    f_kz_vzor = wb.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white', 'pattern': 4, 'pattern_bg_color': '#003399'})
-    f_v_vzor = wb.add_format({**fmt_sep, 'bg_color': '#00FFCC', 'pattern': 4, 'pattern_bg_color': '#00BB99'})
+    # OPRAVENÉ: Kľúčové slovo zmenené na pattern_background_color podľa špecifikácie xlsxwriter
+    f_d_vzor = wb.add_format({**fmt_sep, 'bg_color': '#339933', 'font_color': 'white', 'pattern': 4, 'pattern_background_color': '#226622'})
+    f_kz_vzor = wb.add_format({**fmt_sep, 'bg_color': '#0066FF', 'font_color': 'white', 'pattern': 4, 'pattern_background_color': '#003399'})
+    f_v_vzor = wb.add_format({**fmt_sep, 'bg_color': '#00FFCC', 'pattern': 4, 'pattern_background_color': '#00BB99'})
 
     fmt_num = wb.add_format({**fmt_sep, 'num_format': '#,##0.0'})
     f_c1_d = wb.add_format({**fmt_b, 'bg_color': '#FF0000', 'font_color': 'white', 'bold': True})
@@ -101,9 +101,33 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     _, days_count = calendar.monthrange(r, m)
     vysledky = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}
     
-    df_db = df_db.reset_index(drop=True)
-    hod_fond_sofar = {idx: 0.0 for idx in df_db.index}
+    ludia = []
+    for i, row in df_db.iterrows():
+        ludia.append({
+            'id': i,
+            'Priezvisko': str(row['Priezvisko']).strip(),
+            'Meno': str(row.get('Meno', '')).strip(),
+            'Zmena': int(row['Zmena']),
+            'C1': str(row.get('C1', 'Nie')).lower(),
+            'Priorita_ZT': str(row.get('Priorita_ZT', 'Nie')).lower(),
+            'ZT': str(row.get('ZT', 'Nie')).lower(),
+            'Priorita_NB': str(row.get('Priorita_NB', 'Nie')).lower(),
+            'NB': str(row.get('NB', 'Nie')).lower(),
+            'Priorita_Z8': str(row.get('Priorita_Z8', 'Nie')).lower(),
+            'Z8': str(row.get('Z8', 'Nie')).lower(),
+            'TP': str(row.get('TP', 'Nie')).lower(),
+            'S1': str(row.get('S1', 'Nie')).lower(),
+            'S2': str(row.get('S2', 'Nie')).lower(),
+            'S3': str(row.get('S3', 'Nie')).lower(),
+            'W1': str(row.get('W1', 'Nie')).lower(),
+            'M': str(row.get('M', 'Nie')).lower(),
+            'IR': str(row.get('IR', 'Nie')).lower(),
+            'IP': str(row.get('IP', 'Nie')).lower(),
+            'X': str(row.get('X', 'Nie')).lower(),
+            'original_row': row
+        })
 
+    hod_fond_sofar = {p['id']: 0.0 for p in ludia}
     neobsadene_zaznamy = []
 
     abs_map = {}
@@ -111,15 +135,13 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         priez = str(row['Priezvisko']).strip()
         abs_map[priez] = {'d': parse_days(row['Dovolenka']), 'kz': parse_days(row['KZ']), 'v': parse_days(row['Volno'])}
 
-    for idx in df_db.index:
-        priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-        ab = abs_map.get(priez, {'d':set(), 'kz':set()})
+    for p in ludia:
+        ab = abs_map.get(p['Priezvisko'], {'d':set(), 'kz':set()})
         abs_dni = ab['d'] | ab['kz']
-        z_os = int(df_db.loc[idx, 'Zmena'])
         for d_val in abs_dni:
             if d_val <= days_count:
-                if CYKLY[z_os][(date(r, m, d_val) - START_REF).days % 8] in ['D', 'N']:
-                    hod_fond_sofar[idx] += 11.5
+                if CYKLY[p['Zmena']][(date(r, m, d_val) - START_REF).days % 8] in ['D', 'N']:
+                    hod_fond_sofar[p['id']] += 11.5
 
     for d in range(1, days_count + 1):
         curr_d = date(r, m, d)
@@ -127,104 +149,102 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
         def get_prioritized_people(smena_target, is_75_poz=False):
             pool = []
-            for idx in df_db.index:
-                ma_cyk = CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena_target
-                penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
-                fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
-                pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-            return [x for x in sorted(pool, key=lambda x: x)]
+            for p in ludia:
+                ma_cyk = CYKLY[p['Zmena']][(curr_d - START_REF).days % 8] == smena_target
+                penalty = 10000 if hod_fond_sofar[p['id']] >= fond_limit else 0
+                fond_score = -hod_fond_sofar[p['id']] if is_75_poz else hod_fond_sofar[p['id']]
+                pool.append((p, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
+            return [x[0] for x in sorted(pool, key=lambda x: x[1])]
 
         if is_workday:
             nas_z8 = False
             for col_f in ["Priorita_Z8", "Z8"]:
                 if nas_z8: break
-                for idx in get_prioritized_people('D', True):
-                    if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                    ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                for p in get_prioritized_people('D', True):
+                    if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
+                    ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
-                    if str(df_db.loc[idx].get(col_f,'Nie')).lower() == 'áno':
+                    if p[col_f] == 'áno':
                         if d not in cv:
-                            vysledky[d]['D'][idx] = "Z8"; hod_fond_sofar[idx] += 7.5; nas_z8 = True; break
+                            vysledky[d]['D'][p['id']] = "Z8"; hod_fond_sofar[p['id']] += 7.5; nas_z8 = True; break
                         else:
                             neobsadene_zaznamy.append((d, 'D', 'Z8'))
 
         for smena in ['D', 'N']:
-            for idx in df_db.index:
-                if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena and str(df_db.loc[idx].get('C1','Nie')).lower() == 'áno':
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip()
-                    ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+            for p in ludia:
+                if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
+                if CYKLY[p['Zmena']][(curr_d - START_REF).days % 8] == smena and p['C1'] == 'áno':
+                    ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
-                    if d not in cv and moze_nastupit(idx, d, smena, 'C1', vysledky):
-                        vysledky[d][smena][idx] = 'C1'; hod_fond_sofar[idx] += 11.5; break
-                    elif d in cv and moze_nastupit(idx, d, smena, 'C1', vysledky):
+                    if d not in cv and moze_nastupit(p['id'], d, smena, 'C1', vysledky):
+                        vysledky[d][smena][p['id']] = 'C1'; hod_fond_sofar[p['id']] += 11.5; break
+                    elif d in cv and moze_nastupit(p['id'], d, smena, 'C1', vysledky):
                         neobsadene_zaznamy.append((d, smena, 'C1'))
 
             for p_n in ['ZT', 'NB']:
                 if p_n in vysledky[d][smena].values() or (p_n == 'NB' and smena == 'D' and is_workday): continue
                 nas = False
                 pool = get_prioritized_people(smena)
-                for idx in pool:
-                    if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    if str(df_db.loc[idx].get(f"Priorita_{p_n}",'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
-                        ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                for p in pool:
+                    if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
+                    if p[f"Priorita_{p_n}"] == 'áno' and CYKLY[p['Zmena']][(curr_d - START_REF).days % 8] == smena:
+                        ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                         cv = ab['d'] | ab['kz'] | ab['v']
-                        if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
-                            vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
-                        elif d in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
+                        if d not in cv and moze_nastupit(p['id'], d, smena, p_n, vysledky):
+                            vysledky[d][smena][p['id']] = p_n; hod_fond_sofar[p['id']] += 11.5; nas = True; break
+                        elif d in cv and moze_nastupit(p['id'], d, smena, p_n, vysledky):
                             neobsadene_zaznamy.append((d, smena, p_n))
                 if not nas:
-                    for idx in pool:
-                        if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        if str(df_db.loc[idx].get(p_n,'Nie')).lower() == 'áno' and CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == smena:
-                            priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                    for p in pool:
+                        if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
+                        if p[p_n] == 'áno' and CYKLY[p['Zmena']][(curr_d - START_REF).days % 8] == smena:
+                            ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                             cv = ab['d'] | ab['kz'] | ab['v']
-                            if d not in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
-                                vysledky[d][smena][idx] = p_n; hod_fond_sofar[idx] += 11.5; nas = True; break
-                            elif d in cv and moze_nastupit(idx, d, smena, p_n, vysledky):
+                            if d not in cv and moze_nastupit(p['id'], d, smena, p_n, vysledky):
+                                vysledky[d][smena][p['id']] = p_n; hod_fond_sofar[p['id']] += 11.5; nas = True; break
+                            elif d in cv and moze_nastupit(p['id'], d, smena, p_n, vysledky):
                                 neobsadene_zaznamy.append((d, smena, p_n))
 
             if smena == 'D' and is_workday:
                 specs = (['TP', 'S1', 'S2', 'S3'] if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() not in [0, 5, 6] else []) + (['W_EXTRA'] if use_extra_w else []) + ['M']
                 for poz in specs:
                     if poz in vysledky[d]['D'].values(): continue
-                    for idx in get_prioritized_people('D'):
-                        if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                        priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                    for p in get_prioritized_people('D'):
+                        if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
+                        ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                         cv = ab['d'] | ab['kz'] | ab['v']
                         p_col = poz if poz != 'W_EXTRA' else 'W1'
-                        if str(df_db.loc[idx].get(p_col,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, 'D', poz, vysledky):
+                        if p[p_col] == 'áno' and moze_nastupit(p['id'], d, 'D', poz, vysledky):
                             if d not in cv:
-                                vysledky[d]['D'][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+                                vysledky[d]['D'][p['id']] = poz; hod_fond_sofar[p['id']] += 11.5; break
                             else:
                                 neobsadene_zaznamy.append((d, 'D', poz))
 
             for poz in PRIO_LIST:
                 if poz in vysledky[d][smena].values(): continue
-                for idx in get_prioritized_people(smena):
-                    if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                    priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+                for p in get_prioritized_people(smena):
+                    if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
+                    ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                     cv = ab['d'] | ab['kz'] | ab['v']
-                    if str(df_db.loc[idx].get(poz,'Nie')).lower() == 'áno' and moze_nastupit(idx, d, smena, poz, vysledky):
+                    if p['original_row'].get(poz,'Nie').lower() == 'áno' and moze_nastupit(p['id'], d, smena, poz, vysledky):
                         if d not in cv:
-                            vysledky[d][smena][idx] = poz; hod_fond_sofar[idx] += 11.5; break
+                            vysledky[d][smena][p['id']] = poz; hod_fond_sofar[p['id']] += 11.5; break
                         else:
                             neobsadene_zaznamy.append((d, smena, poz))
 
         if is_workday:
             wa = (((curr_d - START_REF).days // 7) % 2 == 0)
             trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
-            for idx in get_prioritized_people('D', True):
-                if idx in vysledky[d]['D'] or idx in vysledky[d]['N']: continue
-                priez = str(df_db.loc[idx, 'Priezvisko']).strip(); ab = abs_map.get(priez, {'d':set(),'kz':set(),'v':set()})
+            for p in get_prioritized_people('D', True):
+                if p['id'] in vysledky[d]['D'] or p['id'] in vysledky[d]['N']: continue
+                ab = abs_map.get(p['Priezvisko'], {'d':set(),'kz':set(),'v':set()})
                 cv = ab['d'] | ab['kz'] | ab['v']
-                fx = trg if str(df_db.loc[idx].get(trg,'Nie')).lower() == 'áno' else next((p for p in ['X'] if str(df_db.loc[idx].get(p,'Nie')).lower() == 'áno'), None)
-                if fx:
-                    if d not in cv:
-                        vysledky[d]['D'][idx] = fx; hod_fond_sofar[idx] += 7.5
-                    else:
-                        neobsadene_zaznamy.append((d, 'D', fx))
+                if d not in cv:
+                    fx = trg if p[trg] == 'áno' else next((x for x in ['X'] if p[x] == 'áno'), None)
+                    if fx: vysledky[d]['D'][p['id']] = fx; hod_fond_sofar[p['id']] += 7.5
+                else:
+                    fx = trg if p[trg] == 'áno' else next((x for x in ['X'] if p[x] == 'áno'), None)
+                    if fx: neobsadene_zaznamy.append((d, 'D', fx))
 
     ws.set_column(0, 0, 25)
     for d in range(1, days_count + 1): ws.set_column(d, d, 3.5)
@@ -248,11 +268,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         for d in range(1, days_count + 1):
             bg = col_bg_map[d] if col_bg_map[d] != '#FFFFFF' else zebra
             cyk_char = CYKLY[p['Zmena']][(date(r, m, d) - START_REF).days % 8]
-            
-            # Detekcia, či má podľa cyklu v tento deň pracovať (buď denná alebo nočná)
             ma_mat_smenu = cyk_char in ['D', 'N']
             
-            # Vykreslenie absencií s aplikovaním šrafovania (vzoru), ak padnú na plánovanú zmenu
             if d in ab['d']:
                 fmt = f_d_vzor if ma_mat_smenu else f_d
                 ws.merge_range(row_ptr, d, row_ptr+1, d, 'D', fmt)
@@ -277,7 +294,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         ws.merge_range(row_ptr, days_count+2, row_ptr+1, days_count+2, f"={fond_limit}-{sum_c}", fmt_num)
         ws.conditional_format(row_ptr, days_count+2, row_ptr+1, days_count+2, {'type': 'cell', 'criteria': '>', 'value': 0, 'format': fmt_low})
 
-    # --- ZÁPIS NEOBSADENÝCH POZÍCIÍ ---
+    # --- ZÁPIS NEOBSADENÝCH POZÍCIÍ NA SAMOSTATNÝ HÁROK ---
     ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], wb.add_format({'bold':True, 'border':1}))
     
     unikatne_neobsadene = sorted(list(set(neobsadene_zaznamy)), key=lambda x: x)
