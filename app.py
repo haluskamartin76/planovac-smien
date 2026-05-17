@@ -118,7 +118,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
                 fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
                 pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-            return [x[0] for x in sorted(pool, key=lambda x: x[1])]
+            return [x for x in sorted(pool, key=lambda x: x)]
 
         if is_workday:
             nas_z8 = False
@@ -241,7 +241,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
         is_workday = curr_d.weekday() < 5 and curr_d not in sviatky_aktualne
 
         for smena in ['D', 'N']:
-            curr_obs = vysledky[d][smena].values()
+            curr_obs = list(vysledky[d][smena].values())
             prio_check = []
             
             # --- 11.5-HODINOVÉ STÁLE POZÍCIE ---
@@ -253,7 +253,8 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
             elif smena == 'D' and not is_workday:
                 prio_check += ['NB']
 
-            # --- POZÍCIE NAVIAZANÉ LEN NA PRACOVNÉ DNI A DENNÚ SMENU ---
+            # --- POZÍCIE PRE PRACOVNÉ DNI A DENNÚ SMENU ---
+            ocakavane_kancelarie = []
             if smena == 'D' and is_workday:
                 prio_check += ['Z8', 'M']
                 if parl_active and p_from <= curr_d <= p_to and curr_d.weekday() in [1, 2, 3, 4]:
@@ -261,36 +262,47 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 if use_extra_w:
                     prio_check += ['W_EXTRA']
                 
-                # URČENIE, ČI MÁ BYŤ KANCELÁRSKY BLOK (IR/IP/X) REÁLNE OBSADENÝ PODĽA DATABÁZY
+                # Zistíme presne, koľko a aké kancelárske pozície (IR/IP/X) sa majú v tento deň podľa zmeny obsadiť
                 wa = (((curr_d - START_REF).days // 7) % 2 == 0)
                 kanc_trg = "IR" if (wa and curr_d.weekday() <= 1) or (not wa and curr_d.weekday() >= 2) else "IP"
                 
-                ma_byt_kancelaria = False
                 for idx in df_db.index:
-                    # Kontrola, či má zamestnanec podľa svojho cyklu v tento deň službu v práci
-                    ma_cykel_v_ten_den = CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == 'D'
-                    if ma_cykel_v_ten_den:
-                        # Ak má priradené Áno na cieľovú kanceláriu alebo záložné X, táto pozícia v ten deň v pláne musí byť
-                        if str(df_db.loc[idx].get(kanc_trg, 'Nie')).lower() == 'áno' or str(df_db.loc[idx].get('X', 'Nie')).lower() == 'áno':
-                            ma_byt_kancelaria = True
-                            break
-                
-                if ma_byt_kancelaria:
-                    prio_check += ['IR', 'IP', 'X']
+                    if CYKLY[int(df_db.loc[idx, 'Zmena'])][(curr_d - START_REF).days % 8] == 'D':
+                        if str(df_db.loc[idx].get(kanc_trg, 'Nie')).lower() == 'áno':
+                            ocakavane_kancelarie.append(kanc_trg)
+                        elif str(df_db.loc[idx].get('X', 'Nie')).lower() == 'áno':
+                            ocakavane_kancelarie.append('X')
 
-            # Zápis chýbajúcich pozícií na hárok
+            # 1. Klasická kontrola štandardných pozícií
             for p in prio_check:
                 if p not in curr_obs:
-                    # Ak kontrolujeme kancelársku skupinu (IR/IP/X) a v pláne reálne chýba hľadaná pozícia,
-                    # zapíšeme ju len v prípade, že v daný deň nie je obsadená ani jedna alternatíva (čiže nastal kompletný výpadok)
-                    if p in ['IR', 'IP', 'X']:
-                        if any(k in curr_obs for k in ['IR', 'IP', 'X']):
-                            continue
-                        # Pre lepšiu čitateľnosť zapíšeme priamo pozíciu, ktorá mala rotovať (alebo záložné X)
-                        p = kanc_trg if p != 'X' else 'X'
-                        
                     ws_miss.write_row(m_row, 0, [d, smena, p])
                     m_row += 1
+
+            # 2. Presná kontrola počtu obsadených kancelárií (IR / IP / X)
+            if ocakavane_kancelarie:
+                # Spočítame, koľko ľudí reálne na týchto pozíciách v daný deň sedí
+                pocet_obsadenych = sum(1 for p in curr_obs if p in ['IR', 'IP', 'X'])
+                pocet_ocakavanych = len(ocakavane_kancelarie)
+                
+                # Ak je obsadených menej ľudí než systém očakáva, zapíšeme chýbajúce pozície
+                if pocet_obsadenych < pocet_ocakavanych:
+                    chybajuci_pocet = pocet_ocakavanych - pocet_obsadenych
+                    
+                    # Identifikujeme, ktoré konkrétne typy pozícií z očakávaných v pláne chýbajú
+                    for p_typ in set(ocakavane_kancelarie):
+                        if chybajuci_pocet <= 0:
+                            break
+                        # Ak daný typ pozície nie je prítomný vôbec alebo chýba kus, nahlásime ho
+                        v_pláne_je = sum(1 for x in curr_obs if x == p_typ)
+                        v_pláne_ma_byt = ocakavane_kancelarie.count(p_typ)
+                        
+                        if v_pláne_je < v_pláne_ma_byt:
+                            kolko_chyba_tu = v_pláne_ma_byt - v_pláne_je
+                            for _ in range(min(kolko_chyba_tu, chybajuci_pocet)):
+                                ws_miss.write_row(m_row, 0, [d, smena, p_typ])
+                                m_row += 1
+                                chybajuci_pocet -= 1
     
     wb.close()
     return output.getvalue(), f"Plan_{m}_{r}.xlsx"
