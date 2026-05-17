@@ -56,7 +56,13 @@ def parse_days(s):
     return res
 
 def short_label(lbl):
-    m = {"C1":"C", "C2":"C", "Z1":"Z", "Z2":"Z", "W1":"W", "W2":"W", "W_EXTRA":"W", "IR":"R", "IP":"K"}
+    m = {
+        "C1":"C", "C2":"C", 
+        "Z1":"Z", "Z2":"Z", 
+        "W1":"W", "W2":"W", "W_EXTRA":"W", 
+        "S1":"S", "S2":"S", "S3":"S", 
+        "IR":"R", "IP":"K"
+    }
     return m.get(lbl, lbl)
 
 def moze_nastupit(idx, d, smena, poz, vysledky):
@@ -88,7 +94,6 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     _, days_count = calendar.monthrange(r, m)
     vysledky = {d: {'D': {}, 'N': {}} for d in range(1, days_count + 1)}
     
-    # Prevod indexov na bezpečné číselné rozsahy range(0, len) kvôli duplicitám v df_db.index
     df_db = df_db.reset_index(drop=True)
     hod_fond_sofar = {idx: 0.0 for idx in df_db.index}
 
@@ -120,7 +125,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
                 penalty = 10000 if hod_fond_sofar[idx] >= fond_limit else 0
                 fond_score = -hod_fond_sofar[idx] if is_75_poz else hod_fond_sofar[idx]
                 pool.append((idx, (0 if ma_cyk else 1, penalty, fond_score, random.random())))
-            return [x[0] for x in sorted(pool, key=lambda x: x[1])]
+            return [x for x in sorted(pool, key=lambda x: x)]
 
         if is_workday:
             nas_z8 = False
@@ -247,7 +252,7 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
 
         r_ex, zz_col = row_ptr + 1, xlsxwriter.utility.xl_col_to_name(ZZ)
         sc, ec = xlsxwriter.utility.xl_col_to_name(1), xlsxwriter.utility.xl_col_to_name(days_count)
-        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY[1]}\",\"{CYKLY[2]}\",\"{CYKLY[3]}\",\"{CYKLY[4]}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
+        f_parts = [f"IF(OR({xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"D\",{xlsxwriter.utility.xl_col_to_name(d)}{r_ex}=\"KZ\"),IF(OR(MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"D\",MID(CHOOSE({zz_col}{r_ex},\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\",\"{CYKLY}\"),{((date(r,m,d)-START_REF).days%8)+1},1)=\"N\"),11.5,0),0)" for d in range(1, days_count+1)]
         full_formula = f"=(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"*\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"R\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"K\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"X\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"Z8\")*4)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"D\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"KZ\")*11.5)-(COUNTIF({sc}{r_ex}:{ec}{r_ex+1},\"V\")*11.5)+({'+'.join(f_parts)})"
         ws.merge_range(row_ptr, days_count+1, row_ptr+1, days_count+1, full_formula, fmt_num)
         sum_c = xlsxwriter.utility.xl_rowcol_to_cell(row_ptr, days_count+1)
@@ -257,13 +262,13 @@ def generuj_final(m, r, fond_limit, parl_active, p_from, p_to, df_v_edit, use_ex
     # --- ZÁPIS NEOBSADENÝCH POZÍCIÍ NA SAMOSTATNÝ HÁROK ---
     ws_miss.write_row(0, 0, ["Deň", "Smena", "Pozícia"], wb.add_format({'bold':True, 'border':1}))
     
-    unikatne_neobsadene = sorted(list(set(neobsadene_zaznamy)), key=lambda x: x[0])
+    unikatne_neobsadene = sorted(list(set(neobsadene_zaznamy)), key=lambda x: x)
     
     skutocny_row = 1
     for den_m, smena_m, poz_m in unikatne_neobsadene:
         aktualne_obsadene = [short_label(x) for x in vysledky[den_m][smena_m].values()]
         if short_label(poz_m) not in aktualne_obsadene:
-            ws_miss.write_row(skutocny_row, 0, [den_m, smena_m, poz_m])
+            ws_miss.write_row(skutocny_row, 0, [den_m, smena_m, short_label(poz_m)])
             skutocny_row += 1
     
     wb.close()
